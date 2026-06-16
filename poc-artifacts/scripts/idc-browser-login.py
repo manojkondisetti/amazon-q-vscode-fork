@@ -51,9 +51,10 @@ import os
 import re
 import sys
 
-# Match IDCLoginBrowser's 5-minute page budget; IdC redirects can be slow.
-NAV_TIMEOUT_MS = 300_000
-STEP_TIMEOUT_MS = 60_000
+# Timeouts kept WELL under the test harness's 300s per-test cap (setupUtil.setRunnableTimeout)
+# and the hook's 240s execFileSync timeout, so a single slow wait can't blow the budget.
+NAV_TIMEOUT_MS = 60_000
+STEP_TIMEOUT_MS = 30_000
 
 
 def log(msg: str) -> None:
@@ -179,6 +180,8 @@ def drive_login(url: str, username: str, password: str, headed: bool = False,
 
             # Step 3: authorization "Allow access". May be absent on a re-auth where the
             # grant is remembered — mirror IDCLoginBrowser and don't fail if it's missing.
+            _dump_state(page, "before allow step")
+            maybe_dump("4-allow-page")
             log("Looking for Allow/Authorize button.")
             clicked = _click_allow(page)
             if clicked:

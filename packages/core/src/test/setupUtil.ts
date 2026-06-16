@@ -265,13 +265,18 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
                             const out = execFileSync('python3', [script, ...localArgs], {
                                 encoding: 'utf-8',
                                 stdio: ['ignore', 'pipe', 'pipe'],
+                                // Kill the driver before Mocha's 300s per-test cap so its
+                                // buffered logs come back here instead of being lost when the
+                                // hook is force-killed.
+                                timeout: 240_000,
                             })
                             getLogger().info('idc-browser-login output:\n%s', out)
                         } catch (e: any) {
                             const stdout = e?.stdout?.toString?.() ?? ''
                             const stderr = e?.stderr?.toString?.() ?? ''
+                            const killed = e?.killed ? ' (driver hit the 240s timeout)' : ''
                             throw new Error(
-                                `idc-browser-login failed (exit ${e?.status}):\n` +
+                                `idc-browser-login failed (exit ${e?.status})${killed}:\n` +
                                     `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
                             )
                         }
