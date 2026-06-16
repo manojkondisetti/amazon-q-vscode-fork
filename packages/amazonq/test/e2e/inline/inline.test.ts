@@ -9,6 +9,7 @@ import {
     closeAllEditors,
     getTestWindow,
     registerAuthHook,
+    registerStaticBearerToken,
     resetCodeWhispererGlobalVariables,
     TestFolder,
     toTextEditor,
@@ -31,17 +32,36 @@ describe('Amazon Q Inline', async function () {
         retryOnFail: false,
     }
 
+    // When BEARER_TOKEN is injected (CI), authenticate via the static token: patch the
+    // SsoAccessTokenProvider prototype for the WHOLE suite. The token is in-memory only and
+    // the patch must outlive every it() across before/beforeEach, so it is installed in a root
+    // before() and disposed in a root after() (NOT via using(), which disposes on callback
+    // resolve). Otherwise fall back to the browser/Lambda auth hook for internal CI / local runs.
+    const useStaticToken = !!process.env['BEARER_TOKEN']
+    let tokenDisposable: vscode.Disposable | undefined
+
     before(async function () {
         if (!isSSOTestEnvironmentAvailable()) {
             this.skip()
         }
-        await using(registerAuthHook('amazonq-test-account'), async () => {
+        if (useStaticToken) {
+            tokenDisposable = registerStaticBearerToken()
             await loginToIdC()
-        })
+        } else {
+            await using(registerAuthHook('amazonq-test-account'), async () => {
+                await loginToIdC()
+            })
+        }
+    })
+
+    after(function () {
+        tokenDisposable?.dispose()
     })
 
     beforeEach(async function () {
-        registerAuthHook('amazonq-test-account')
+        if (!useStaticToken) {
+            registerAuthHook('amazonq-test-account')
+        }
         const folder = await TestFolder.create()
         tempFolder = folder.path
         await closeAllEditors()

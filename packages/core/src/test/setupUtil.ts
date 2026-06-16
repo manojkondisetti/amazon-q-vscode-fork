@@ -12,6 +12,7 @@ import { hasKey } from '../shared/utilities/tsUtils'
 import { getTestWindow, printPendingUiElements } from './shared/vscode/window'
 import { ToolkitError, formatError } from '../shared/errors'
 import { proceedToBrowser } from '../auth/sso/model'
+import { SsoAccessTokenProvider } from '../auth/sso/ssoAccessTokenProvider'
 import { decodeBase64 } from '../shared'
 
 const runnableTimeout = Symbol('runnableTimeout')
@@ -201,6 +202,54 @@ function maskArns(text: string) {
 
         return match
     })
+}
+
+/**
+ * Bypasses the SSO device-code/browser login entirely by injecting a pre-provisioned bearer
+ * token (supplied via the `BEARER_TOKEN` env var, sourced from a GitHub repository secret).
+ *
+ * Why this works without a browser, Lambda, or network call:
+ * - `AuthUtil.connectToEnterpriseSso()` still runs, so a real IdC SSO connection is created in
+ *   globalState with the correct Amazon Q scopes and cache key (the parts that CANNOT be
+ *   pre-seeded from outside the extension).
+ * - The only step that normally requires the browser is minting the token. We stub the token
+ *   provider's `getToken`/`createToken` to return `BEARER_TOKEN` with a future expiry.
+ * - `getChatAuthState()` validates the connection via `provider.getToken()` only (no network
+ *   call validates the token bytes — see Auth.validateConnection), so the connection resolves
+ *   to `valid`/`connected`.
+ *
+ * The returned token lives in memory only (not written to `~/.aws/sso/cache`), so callers MUST
+ * make their assertions while this hook is still active (i.e. the disposable must outlive them).
+ *
+ * @returns a disposable that restores the original token provider methods.
+ */
+export function registerStaticBearerToken(token = process.env['BEARER_TOKEN']): vscode.Disposable {
+    if (!token) {
+        throw new Error(
+            'registerStaticBearerToken requires a token. Set the BEARER_TOKEN environment variable ' +
+                '(sourced from the repository secret) before running authenticated E2E tests.'
+        )
+    }
+
+    // Expire far enough in the future that isExpired() (which subtracts a buffer) stays false
+    // for the whole test run, but within a plausible IdC session length.
+    const ssoToken = {
+        accessToken: token,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        tokenType: 'Bearer',
+    }
+
+    // Patch the base class prototype: the concrete providers (DeviceFlowAuthorization,
+    // AuthFlowAuthorization, WebAuthorization) all inherit getToken/createToken from it.
+    const getTokenStub = patchObject(SsoAccessTokenProvider.prototype, 'getToken', async () => ssoToken as any)
+    const createTokenStub = patchObject(SsoAccessTokenProvider.prototype, 'createToken', async () => ssoToken as any)
+
+    return {
+        dispose: () => {
+            getTokenStub.dispose()
+            createTokenStub.dispose()
+        },
+    }
 }
 
 /**
