@@ -216,8 +216,8 @@ function maskArns(text: string) {
  * Playwright script. POC: see poc-artifacts/scripts/idc-browser-login.py and
  * RUNBOOK-no-auth-e2e.md §6-auth.
  */
-function runLocalBrowserLogin(urlString: string, secret: string): void {
-    const { execFileSync } = require('child_process') as typeof import('child_process')
+function runLocalBrowserLogin(urlString: string, secret: string): Promise<void> {
+    const { spawn } = require('child_process') as typeof import('child_process')
     const fs2 = require('fs') as typeof import('fs')
     const script =
         process.env['AUTH_UTIL_LOCAL_BROWSER_SCRIPT'] ?? 'poc-artifacts/scripts/idc-browser-login.py'
@@ -252,25 +252,30 @@ function runLocalBrowserLogin(urlString: string, secret: string): void {
     // wrapper meant the timeout SIGTERM'd bash while orphaned chromium kept the stdout
     // pipe open, so execFileSync never returned. Invoke python3 directly + SIGKILL.)
     localArgs.push('--log-file', `${outDir}/idc-browser-login.log`)
-    try {
-        execFileSync('python3', [script, ...localArgs], {
-            encoding: 'utf-8',
-            stdio: ['ignore', 'pipe', 'pipe'],
-            // Kill the driver before Mocha's 300s per-test cap. SIGKILL (not the default
-            // SIGTERM) so chromium children can't keep the process group alive.
-            timeout: 240_000,
-            killSignal: 'SIGKILL',
+    // CRITICAL: run ASYNC (spawn, not execFileSync). The browser approval must happen
+    // CONCURRENTLY with the extension's device-code token poll — both are on this same Node
+    // event loop. execFileSync blocked the loop for ~40s (ext host "unresponsive"), freezing
+    // the poll so it never saw the authorization → getChatAuthState() stayed 'disconnected'
+    // even though the driver succeeded (run 17). Awaiting a spawned child yields the loop.
+    return new Promise<void>((resolve, reject) => {
+        const child = spawn('python3', [script, ...localArgs], { stdio: ['ignore', 'pipe', 'pipe'] })
+        const timer = setTimeout(() => child.kill('SIGKILL'), 240_000)
+        let stderr = ''
+        child.stderr?.on('data', (d: Buffer) => (stderr += d.toString()))
+        child.on('error', (err: Error) => {
+            clearTimeout(timer)
+            reject(err)
         })
-        getLogger().info('idc-browser-login completed; see %s', `${outDir}/idc-browser-login.log`)
-    } catch (e: any) {
-        const stdout = e?.stdout?.toString?.() ?? ''
-        const stderr = e?.stderr?.toString?.() ?? ''
-        const killed = e?.killed ? ' (driver hit the 240s timeout — SIGKILLed)' : ''
-        throw new Error(
-            `idc-browser-login failed (exit ${e?.status})${killed}:\n` +
-                `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
-        )
-    }
+        child.on('close', (code: number | null) => {
+            clearTimeout(timer)
+            if (code === 0) {
+                getLogger().info('idc-browser-login completed; see %s', `${outDir}/idc-browser-login.log`)
+                resolve()
+            } else {
+                reject(new Error(`idc-browser-login failed (exit ${code}):\n${stderr}`))
+            }
+        })
+    })
 }
 
 export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UTIL_LAMBDA_ARN']) {
@@ -287,7 +292,7 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
         //      modal and only calls openExternal once it's selected. Without the click the
         //      modal sits unanswered until the 300s test cap (run 13's pending message).
         const openStub = patchObject(vscode.env, 'openExternal', async (target) => {
-            runLocalBrowserLogin(target.toString(true), secret)
+            await runLocalBrowserLogin(target.toString(true), secret)
             return true
         })
         const sub = getTestWindow().onDidShowMessage((message) => {
