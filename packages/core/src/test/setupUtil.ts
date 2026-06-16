@@ -239,8 +239,13 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
                             process.env['AUTH_UTIL_LOCAL_BROWSER_SCRIPT'] ??
                             'poc-artifacts/scripts/idc-browser-login.py'
                         const localArgs = ['--url', urlString]
-                        if (secret) {
-                            localArgs.push('--secret-id', secret)
+                        // Prefer AMAZONQ_TEST_SECRET (a real ARN, set by the workflow) over the
+                        // `secret` arg — the spec hardcodes registerAuthHook('amazonq-test-account'),
+                        // a bare name that won't match a differently-named secret and carries no
+                        // region. The ARN supplies the region the driver needs.
+                        const secretId = process.env['AMAZONQ_TEST_SECRET'] ?? secret
+                        if (secretId) {
+                            localArgs.push('--secret-id', secretId)
                         }
                         // The secret's region is INDEPENDENT of the SSO region. If the secret is
                         // a full ARN the driver reads the region from it; pass SECRET_REGION only
