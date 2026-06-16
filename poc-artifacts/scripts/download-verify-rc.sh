@@ -37,11 +37,14 @@ curl -fsSL "${BASE}/${ZIP_NAME}" -o "${ZIP_PATH}"
 curl -fsSL "${BASE}/manifest.json" -o "${MANIFEST}"
 
 # Expected SHA384 for the server zip in the matching target.
-EXPECTED="$(jq -r --arg f "$ZIP_NAME" --arg p "$M_PLATFORM" --arg a "$M_ARCH" '
+# NOTE: in this manifest the content `filename` is the generic "servers.zip"; the
+# platform-specific name (e.g. linux-x64-servers.zip) only appears in the `url`. So match
+# the content whose url ENDS WITH our $ZIP_NAME rather than filename == $ZIP_NAME.
+EXPECTED="$(jq -r --arg z "$ZIP_NAME" --arg p "$M_PLATFORM" --arg a "$M_ARCH" '
   .versions[].targets[]
   | select(.platform == $p and .arch == $a)
   | .contents[]
-  | select(.filename == $f)
+  | select(.url | endswith($z))
   | .hashes[]
   | select(startswith("sha384:"))
   | sub("^sha384:"; "")
