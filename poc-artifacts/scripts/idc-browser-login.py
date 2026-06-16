@@ -128,24 +128,34 @@ def drive_login(url: str, username: str, password: str) -> None:
             # Because the extension passes ?user_code=XXXX-XXXX the code is pre-filled, so we
             # just confirm. Best-effort: skip silently if this page isn't shown.
             # NOTE: Playwright's name= accepts a str or re.Pattern only — NOT a callable.
+            # Keep this regex narrow: the device-confirm button is "Confirm and continue" /
+            # "Verify". Do NOT match "Next"/"Allow" here, or it could eat the username page's
+            # submit before we type the username.
             try:
                 confirm = page.get_by_role(
-                    "button", name=re.compile(r"Confirm|Continue|Verify|Next|Allow", re.I)
+                    "button", name=re.compile(r"Confirm|Continue|Verify", re.I)
                 )
                 confirm.first.click(timeout=15_000)
                 log("Clicked device-code confirm/continue.")
             except PWTimeout:
                 log("No device-code confirm page (or already past it); continuing.")
+            _dump_state(page, "after device-code confirm")
 
             # Step 1: username  (IDCLoginBrowser: #awsui-input-0 → submit)
             log("Entering username.")
             page.fill("#awsui-input-0", username, timeout=STEP_TIMEOUT_MS)
             page.click("button[type=submit]")
+            page.wait_for_timeout(2_000)
+            _dump_state(page, "after username submit")
 
-            # Step 2: password  (#awsui-input-1 → submit)
+            # Step 2: password. On some IdC variants the password lives on a NEW page where
+            # the first input is #awsui-input-0 again; on others it's #awsui-input-1 on the
+            # same page. Try a type=password field first, then fall back to the awsui ids.
             log("Entering password.")
-            page.fill("#awsui-input-1", password, timeout=STEP_TIMEOUT_MS)
+            _fill_password(page, password)
             page.click("button[type=submit]")
+            page.wait_for_timeout(3_000)
+            _dump_state(page, "after password submit")
 
             # Step 3: authorization "Allow access". May be absent on a re-auth where the
             # grant is remembered — mirror IDCLoginBrowser and don't fail if it's missing.
@@ -161,11 +171,53 @@ def drive_login(url: str, username: str, password: str) -> None:
             final = page.url
             if any(bad in final for bad in ("signin", "login", "error")):
                 # Surface state for debugging, then hard-fail — a stuck login is a real failure.
+                _dump_state(page, "STUCK on login/error page")
                 log(f"Still on a login/error page after Allow: {final}")
                 sys.exit("IdC login did not complete (stuck on sign-in/error page).")
             log("Login flow complete.")
         finally:
             browser.close()
+
+
+def _dump_state(page, where: str) -> None:
+    """Log url + title + visible alert/error text so CI stderr shows what the page is.
+
+    IdC renders auth failures and MFA prompts as visible text (e.g. 'Your authentication
+    information is incorrect', 'Multi-factor authentication'), which disambiguates a stuck
+    login (bad creds vs MFA vs wrong selector) without a screenshot.
+    """
+    try:
+        title = page.title()
+    except Exception:  # noqa: BLE001
+        title = "<unavailable>"
+    log(f"[{where}] url={page.url} title={title!r}")
+    # Surface any visible alert/error/role=alert text (best-effort, short).
+    for sel in ("[role=alert]", ".awsui-form-field-error", "text=/incorrect|invalid|error|"
+                "multi-factor|MFA|verification code/i"):
+        try:
+            loc = page.locator(sel)
+            n = loc.count()
+            for i in range(min(n, 3)):
+                txt = (loc.nth(i).inner_text(timeout=2_000) or "").strip()
+                if txt:
+                    log(f"[{where}] alert: {txt[:200]}")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _fill_password(page, password: str) -> None:
+    """Fill the password field, tolerant of which awsui id / page it lands on."""
+    # Prefer a real password input (works regardless of awsui index or separate page).
+    for sel in ("input[type=password]", "#awsui-input-1", "#awsui-input-0"):
+        try:
+            loc = page.locator(sel)
+            loc.wait_for(state="visible", timeout=15_000)
+            loc.fill(password)
+            log(f"Filled password into {sel}.")
+            return
+        except Exception:  # noqa: BLE001
+            continue
+    raise RuntimeError("Could not find a password field (input[type=password] / #awsui-input-*)")
 
 
 def _click_allow(page) -> bool:
