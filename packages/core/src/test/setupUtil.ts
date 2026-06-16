@@ -255,13 +255,20 @@ function runLocalBrowserLogin(urlString: string, secret: string): void {
         }
     }
     try {
-        const out = execFileSync('python3', [script, ...localArgs], {
-            encoding: 'utf-8',
-            stdio: ['ignore', 'pipe', 'pipe'],
-            // Kill the driver before Mocha's 300s per-test cap so its buffered logs come
-            // back here instead of being lost when the hook is force-killed.
-            timeout: 240_000,
-        })
+        // The driver logs to STDERR (and HTML dumps to disk). Redirect stderr→stdout (2>&1
+        // semantics) so writeTrace captures the [idc-browser-login] log lines, not just the
+        // empty stdout we saw in run 15.
+        const out = execFileSync(
+            'bash',
+            ['-c', `python3 "$@" 2>&1`, 'bash', script, ...localArgs],
+            {
+                encoding: 'utf-8',
+                stdio: ['ignore', 'pipe', 'pipe'],
+                // Kill the driver before Mocha's 300s per-test cap so its buffered logs come
+                // back here instead of being lost when the hook is force-killed.
+                timeout: 240_000,
+            }
+        )
         writeTrace('ok', out)
         getLogger().info('idc-browser-login output:\n%s', out)
     } catch (e: any) {

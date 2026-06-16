@@ -190,19 +190,42 @@ def drive_login(url: str, username: str, password: str, headed: bool = False,
             _dump_state(page, "after password submit")
             maybe_dump("3-after-password")
 
-            # Step 3: authorization "Allow access". May be absent on a re-auth where the
-            # grant is remembered — mirror IDCLoginBrowser and don't fail if it's missing.
-            _dump_state(page, "before allow step")
+            # Step 3: device authorization. After login the portal returns to the device page
+            # which has a "Confirm and continue" button (device-code confirm), then an
+            # "Allow access" approval. Click through both. The user_code is carried in the URL
+            # the extension opened, so the code is pre-filled on this page.
+            _dump_state(page, "before device-authorization step")
             maybe_dump("4-allow-page")
-            log("Looking for Allow/Authorize button.")
+            log("Device authorization: confirm + allow.")
+            # 3a. "Confirm and continue" (device-code confirm), if shown.
+            for _ in range(2):
+                if _click_button_optional(page, r"Confirm and continue|Confirm|Continue|Next"):
+                    log("Clicked a confirm/continue button.")
+                    page.wait_for_timeout(2_500)
+                    _dump_state(page, "after confirm/continue")
+                    maybe_dump("5-after-confirm")
+                else:
+                    break
+            # 3b. "Allow access" / "Allow" approval.
             clicked = _click_allow(page)
             if clicked:
                 log("Clicked Allow — device authorized.")
             else:
-                log("Allow button not found — assuming grant already remembered; continuing.")
+                log("Allow button not found — may already be approved; continuing.")
+            maybe_dump("6-after-allow")
 
-            # Give the redirect that completes the device flow a moment to fire.
+            # Success looks like a page saying the request was approved / you can close the tab.
             page.wait_for_timeout(5_000)
+            _dump_state(page, "final")
+            maybe_dump("7-final")
+            try:
+                body = (page.locator("body").inner_text(timeout=3_000) or "")
+            except Exception:  # noqa: BLE001
+                body = ""
+            if re.search(r"request approved|you can close|approved this request|sign[- ]?in successful", body, re.I):
+                log("Device authorization approved — login flow complete.")
+                return
+
             final = page.url
             if any(bad in final for bad in ("signin", "login", "error")):
                 # Surface state for debugging, then hard-fail — a stuck login is a real failure.
@@ -270,6 +293,15 @@ def _click_button(page, name_regex: str) -> None:
     except Exception:  # noqa: BLE001
         page.click("button[type=submit]", timeout=15_000)
         log("Clicked button[type=submit] (text match failed).")
+
+
+def _click_button_optional(page, name_regex: str, timeout_ms: int = 8_000) -> bool:
+    """Click a button by visible text if present; return False (no fallback) if not found."""
+    try:
+        page.get_by_role("button", name=re.compile(name_regex, re.I)).first.click(timeout=timeout_ms)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _click_allow(page) -> bool:
