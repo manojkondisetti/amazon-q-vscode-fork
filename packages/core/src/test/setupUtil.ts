@@ -214,7 +214,7 @@ function maskArns(text: string) {
 export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UTIL_LAMBDA_ARN']) {
     return getTestWindow().onDidShowMessage((message) => {
         if (message.items.length > 0 && message.items[0].title.match(new RegExp(proceedToBrowser))) {
-            if (!lambdaId) {
+            if (!lambdaId && !process.env['AUTH_UTIL_LOCAL_BROWSER']) {
                 const baseMessage = 'Browser login flow was shown during testing without an authorizer function'
                 if (process.env['AWS_TOOLKIT_AUTOMATION'] === 'local') {
                     throw new Error(`${baseMessage}. You may need to login manually before running tests.`)
@@ -228,19 +228,46 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
                     // Latest eg: 'https://nkomonen.awsapps.com/start/#/device?user_code=JXZC-NVRK'
                     const urlString = target.toString(true)
 
-                    // Drop the user_code parameter since the auth lambda does not support it yet, and keeping it
-                    // would trigger a slightly different UI flow which breaks the automation.
-                    // TODO: If the auth lambda supports user_code in the parameters then we can skip this step
-                    const verificationUri = urlString.split('?')[0]
+                    // POC: drive the device-code browser approval LOCALLY instead of via the
+                    // auth Lambda. Gated on AUTH_UTIL_LOCAL_BROWSER so the default (Lambda) path
+                    // is untouched. The local driver keeps the full URL (incl. user_code —
+                    // Playwright handles the confirm page), unlike the Lambda which needs it
+                    // stripped. See poc-artifacts/scripts/idc-browser-login.py.
+                    if (process.env['AUTH_UTIL_LOCAL_BROWSER']) {
+                        const { execFileSync } = require('child_process') as typeof import('child_process')
+                        const script =
+                            process.env['AUTH_UTIL_LOCAL_BROWSER_SCRIPT'] ??
+                            'poc-artifacts/scripts/idc-browser-login.py'
+                        const localArgs = ['--url', urlString]
+                        if (secret) {
+                            localArgs.push('--secret-id', secret)
+                        }
+                        // The secret's region is INDEPENDENT of the SSO region. If the secret is
+                        // a full ARN the driver reads the region from it; pass SECRET_REGION only
+                        // for a bare-name secret. (Do NOT pass TEST_SSO_REGION here — the secret
+                        // may live in a different region than the IdC tenant.)
+                        if (process.env['SECRET_REGION']) {
+                            localArgs.push('--secret-region', process.env['SECRET_REGION'])
+                        }
+                        if (process.env['IDC_USERNAME']) {
+                            localArgs.push('--username', process.env['IDC_USERNAME'])
+                        }
+                        // Inherit stdio so the driver's [idc-browser-login] logs stream to CI.
+                        // Throws (fails the test) on non-zero exit — a broken login must hard-fail.
+                        execFileSync('python3', [script, ...localArgs], { stdio: 'inherit' })
+                    } else {
+                        // Default: the existing auth Lambda path (unchanged). Drop the user_code
+                        // param since the auth lambda does not support it yet, and keeping it
+                        // would trigger a slightly different UI flow which breaks the automation.
+                        const verificationUri = urlString.split('?')[0]
+                        const userCode = new URLSearchParams(urlString.split('?')[1]).get('user_code')
 
-                    const params = urlString.split('?')[1]
-                    const userCode = new URLSearchParams(params).get('user_code')
-
-                    await invokeLambda(lambdaId, {
-                        secret,
-                        userCode,
-                        verificationUri,
-                    })
+                        await invokeLambda(lambdaId, {
+                            secret,
+                            userCode,
+                            verificationUri,
+                        })
+                    }
                 } finally {
                     openStub.dispose()
                 }
