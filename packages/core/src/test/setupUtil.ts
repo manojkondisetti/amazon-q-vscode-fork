@@ -211,10 +211,86 @@ function maskArns(text: string) {
  * * `userCode` - the user verification code e.g. `ABCD-EFGH`. This is returned by the device authorization flow.
  * * `verificationUri` - the url to login with. This is returned by the device authorization flow.
  */
+/**
+ * Drive the SSO device-code browser approval LOCALLY (no auth Lambda) via a headless
+ * Playwright script. POC: see poc-artifacts/scripts/idc-browser-login.py and
+ * RUNBOOK-no-auth-e2e.md §6-auth.
+ */
+function runLocalBrowserLogin(urlString: string, secret: string): void {
+    const { execFileSync } = require('child_process') as typeof import('child_process')
+    const fs2 = require('fs') as typeof import('fs')
+    const script =
+        process.env['AUTH_UTIL_LOCAL_BROWSER_SCRIPT'] ?? 'poc-artifacts/scripts/idc-browser-login.py'
+    // Keep the full URL (incl. user_code) — the Playwright driver handles the confirm page.
+    const localArgs = ['--url', urlString]
+    // Prefer AMAZONQ_TEST_SECRET (a real ARN, set by the workflow) over the hook's `secret`
+    // arg — the spec hardcodes registerAuthHook('amazonq-test-account'), a bare name that
+    // won't match a differently-named secret and carries no region. The ARN supplies region.
+    const secretId = process.env['AMAZONQ_TEST_SECRET'] ?? secret
+    if (secretId) {
+        localArgs.push('--secret-id', secretId)
+    }
+    if (process.env['SECRET_REGION']) {
+        localArgs.push('--secret-region', process.env['SECRET_REGION'])
+    }
+    if (process.env['IDC_USERNAME']) {
+        localArgs.push('--username', process.env['IDC_USERNAME'])
+    }
+    // Diagnostics → .test-reports/ (cwd is packages/amazonq; the workflow uploads it). Set
+    // here, not via env, because the extension host receives only a curated env.
+    try {
+        fs2.mkdirSync('.test-reports', { recursive: true })
+    } catch {
+        // ignore
+    }
+    localArgs.push('--dump-html', '.test-reports/idc-page')
+    const writeTrace = (label: string, out: string) => {
+        try {
+            fs2.writeFileSync(`.test-reports/idc-browser-login.${label}.log`, out)
+        } catch {
+            // ignore
+        }
+    }
+    try {
+        const out = execFileSync('python3', [script, ...localArgs], {
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            // Kill the driver before Mocha's 300s per-test cap so its buffered logs come
+            // back here instead of being lost when the hook is force-killed.
+            timeout: 240_000,
+        })
+        writeTrace('ok', out)
+        getLogger().info('idc-browser-login output:\n%s', out)
+    } catch (e: any) {
+        const stdout = e?.stdout?.toString?.() ?? ''
+        const stderr = e?.stderr?.toString?.() ?? ''
+        const killed = e?.killed ? ' (driver hit the 240s timeout)' : ''
+        writeTrace('fail', `exit=${e?.status} killed=${e?.killed}\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`)
+        throw new Error(
+            `idc-browser-login failed (exit ${e?.status})${killed}:\n` +
+                `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
+        )
+    }
+}
+
 export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UTIL_LAMBDA_ARN']) {
+    // POC local-browser path: the newer device-code flow shows a *progress* notification
+    // ("Confirm code … in the login page opened in your web browser"), NOT the modal
+    // "Proceed To Browser" button this hook used to key on — so matching the message never
+    // fired and the real openExternal ran (no-op headless), leaving the device unauthorized
+    // until the 300s test cap. Instead, eagerly stub openExternal for the whole hook lifetime
+    // so ANY auth browser-open runs the local driver, regardless of which prompt variant shows.
+    if (process.env['AUTH_UTIL_LOCAL_BROWSER']) {
+        const openStub = patchObject(vscode.env, 'openExternal', async (target) => {
+            runLocalBrowserLogin(target.toString(true), secret)
+            return true
+        })
+        return openStub
+    }
+
     return getTestWindow().onDidShowMessage((message) => {
         if (message.items.length > 0 && message.items[0].title.match(new RegExp(proceedToBrowser))) {
-            if (!lambdaId && !process.env['AUTH_UTIL_LOCAL_BROWSER']) {
+            if (!lambdaId) {
                 const baseMessage = 'Browser login flow was shown during testing without an authorizer function'
                 if (process.env['AWS_TOOLKIT_AUTOMATION'] === 'local') {
                     throw new Error(`${baseMessage}. You may need to login manually before running tests.`)
@@ -227,95 +303,17 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
                 try {
                     // Latest eg: 'https://nkomonen.awsapps.com/start/#/device?user_code=JXZC-NVRK'
                     const urlString = target.toString(true)
+                    // Default: the existing auth Lambda path (unchanged). Drop the user_code
+                    // param since the auth lambda does not support it yet, and keeping it
+                    // would trigger a slightly different UI flow which breaks the automation.
+                    const verificationUri = urlString.split('?')[0]
+                    const userCode = new URLSearchParams(urlString.split('?')[1]).get('user_code')
 
-                    // POC: drive the device-code browser approval LOCALLY instead of via the
-                    // auth Lambda. Gated on AUTH_UTIL_LOCAL_BROWSER so the default (Lambda) path
-                    // is untouched. The local driver keeps the full URL (incl. user_code —
-                    // Playwright handles the confirm page), unlike the Lambda which needs it
-                    // stripped. See poc-artifacts/scripts/idc-browser-login.py.
-                    if (process.env['AUTH_UTIL_LOCAL_BROWSER']) {
-                        const { execFileSync } = require('child_process') as typeof import('child_process')
-                        const script =
-                            process.env['AUTH_UTIL_LOCAL_BROWSER_SCRIPT'] ??
-                            'poc-artifacts/scripts/idc-browser-login.py'
-                        const localArgs = ['--url', urlString]
-                        // Prefer AMAZONQ_TEST_SECRET (a real ARN, set by the workflow) over the
-                        // `secret` arg — the spec hardcodes registerAuthHook('amazonq-test-account'),
-                        // a bare name that won't match a differently-named secret and carries no
-                        // region. The ARN supplies the region the driver needs.
-                        const secretId = process.env['AMAZONQ_TEST_SECRET'] ?? secret
-                        if (secretId) {
-                            localArgs.push('--secret-id', secretId)
-                        }
-                        // The secret's region is INDEPENDENT of the SSO region. If the secret is
-                        // a full ARN the driver reads the region from it; pass SECRET_REGION only
-                        // for a bare-name secret. (Do NOT pass TEST_SSO_REGION here — the secret
-                        // may live in a different region than the IdC tenant.)
-                        if (process.env['SECRET_REGION']) {
-                            localArgs.push('--secret-region', process.env['SECRET_REGION'])
-                        }
-                        if (process.env['IDC_USERNAME']) {
-                            localArgs.push('--username', process.env['IDC_USERNAME'])
-                        }
-                        // Diagnostics: dump page HTML alongside the test reports. The hook's cwd
-                        // is packages/amazonq, whose .test-reports/ the workflow uploads. We set
-                        // this here (not via env) because the extension host receives only a
-                        // curated env, so IDC_* vars set at the job level don't reach the driver.
-                        const fs2 = require('fs') as typeof import('fs')
-                        try {
-                            fs2.mkdirSync('.test-reports', { recursive: true })
-                        } catch {
-                            // ignore
-                        }
-                        localArgs.push('--dump-html', '.test-reports/idc-page')
-                        // Capture stdout+stderr so the driver's [idc-browser-login] logs and any
-                        // Python traceback are visible. Write them to a file on EVERY path (the
-                        // extension host doesn't propagate inherited stdio to the reporter, and on
-                        // success nothing is thrown) so the artifact always has the trace.
-                        const writeTrace = (label: string, out: string) => {
-                            try {
-                                fs2.writeFileSync(`.test-reports/idc-browser-login.${label}.log`, out)
-                            } catch {
-                                // ignore
-                            }
-                        }
-                        try {
-                            const out = execFileSync('python3', [script, ...localArgs], {
-                                encoding: 'utf-8',
-                                stdio: ['ignore', 'pipe', 'pipe'],
-                                // Kill the driver before Mocha's 300s per-test cap so its
-                                // buffered logs come back here instead of being lost when the
-                                // hook is force-killed.
-                                timeout: 240_000,
-                            })
-                            writeTrace('ok', out)
-                            getLogger().info('idc-browser-login output:\n%s', out)
-                        } catch (e: any) {
-                            const stdout = e?.stdout?.toString?.() ?? ''
-                            const stderr = e?.stderr?.toString?.() ?? ''
-                            const killed = e?.killed ? ' (driver hit the 240s timeout)' : ''
-                            writeTrace('fail', `exit=${e?.status} killed=${e?.killed}\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`)
-                            throw new Error(
-                                `idc-browser-login failed (exit ${e?.status})${killed}:\n` +
-                                    `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
-                            )
-                        }
-                    } else {
-                        // Default: the existing auth Lambda path (unchanged). Drop the user_code
-                        // param since the auth lambda does not support it yet, and keeping it
-                        // would trigger a slightly different UI flow which breaks the automation.
-                        const verificationUri = urlString.split('?')[0]
-                        const userCode = new URLSearchParams(urlString.split('?')[1]).get('user_code')
-
-                        // lambdaId is guaranteed defined here: we only reach this else when
-                        // AUTH_UTIL_LOCAL_BROWSER is unset, and the guard above already threw if
-                        // lambdaId was also unset. TS can't narrow across that compound guard.
-                        await invokeLambda(lambdaId!, {
-                            secret,
-                            userCode,
-                            verificationUri,
-                        })
-                    }
+                    await invokeLambda(lambdaId, {
+                        secret,
+                        userCode,
+                        verificationUri,
+                    })
                 } finally {
                     openStub.dispose()
                 }
