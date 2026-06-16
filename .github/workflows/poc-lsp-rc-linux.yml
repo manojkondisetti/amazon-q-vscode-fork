@@ -1,0 +1,107 @@
+# POC (Linux, credential-free): prove the CodeBuild runner + webhook + RC artifact path.
+#
+# This is the SMALLEST possible first proof. It does NOT need the auth Lambda, the test
+# SSO account, VS Code, or xvfb — it only downloads the unreleased RC language server and
+# runs the LSP `initialize` handshake smoke. Once this is green, you've validated:
+#   • the GitHub Actions job lands on the CodeBuild-managed runner (webhook works),
+#   • the RC asset downloads + SHA384-verifies,
+#   • the RC binary launches and speaks LSP on this OS.
+#
+# Run on aws-managed Linux (the project's current LINUX_CONTAINER). The full extension E2E
+# (auth Lambda + xvfb + ExTester) is poc-lsp-rc.yml; do that after this passes.
+#
+# ── Prereqs ──
+#   • CodeBuild project (Linux) with a webhook filtered to WORKFLOW_JOB_QUEUED.
+#     (As of setup the project VSCode-test-poc webhook was PULL_REQUEST_CREATED — must be
+#      changed to WORKFLOW_JOB_QUEUED or the job will hang.)
+#   • GitHub repo Variable: vars.POC_CODEBUILD_PROJECT = the project name (e.g. VSCode-test-poc)
+#   • No secrets, no IAM changes needed for this workflow.
+
+name: POC - LSP RC Linux smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "aws/language-servers release tag to test"
+        type: string
+        required: true
+        default: "agentic-rc-1.70.0"
+      platform:
+        description: "LSP server asset platform (Linux runner → linux-x64)"
+        type: choice
+        required: true
+        default: "linux-x64"
+        options:
+          - linux-x64
+          - linux-arm64
+      reason:
+        description: "Why are you running this?"
+        type: string
+        required: false
+        default: "ad-hoc POC smoke"
+
+permissions:
+  contents: read
+
+jobs:
+  rc-handshake-smoke:
+    name: RC handshake smoke (${{ inputs.platform }})
+    runs-on:
+      - codebuild-${{ vars.POC_CODEBUILD_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RC_PLATFORM: ${{ inputs.platform }}
+      RC_DEST: ${{ runner.temp }}/rc-lsp
+    steps:
+      - name: Checkout (for the poc-artifacts scripts)
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Ensure jq + unzip present
+        shell: bash
+        run: |
+          # amazonlinux CodeBuild images usually have these; install defensively.
+          (command -v jq && command -v unzip) || sudo dnf install -y jq unzip || sudo yum install -y jq unzip
+
+      - name: Download + verify RC language server
+        shell: bash
+        run: |
+          chmod +x ./poc-artifacts/scripts/download-verify-rc.sh
+          ./poc-artifacts/scripts/download-verify-rc.sh "$RELEASE_TAG" "$RC_PLATFORM" "$RC_DEST"
+
+      - name: Resolve LSP entrypoint
+        id: entry
+        shell: bash
+        run: |
+          ENTRY="$(find "$RC_DEST" -name 'aws-lsp-codewhisperer.js' | head -1)"
+          if [ -z "$ENTRY" ]; then echo "entrypoint not found under $RC_DEST" >&2; exit 1; fi
+          echo "path=$ENTRY" >> "$GITHUB_OUTPUT"
+          echo "Found: $ENTRY"
+
+      # The actual gate. Hard-fails (non-zero) on timeout / crash / missing capabilities.
+      # Deliberately NOT continue-on-error (contrast Kiro smoke-tests.yml; decision D3 note).
+      - name: LSP handshake smoke
+        shell: bash
+        run: node ./poc-artifacts/smoke-handshake/handshake-smoke.mjs "${{ steps.entry.outputs.path }}"
+
+      - name: Upload extracted-RC listing (evidence)
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          ls -laR "$RC_DEST" > "$RUNNER_TEMP/evidence/rc-listing.txt" 2>&1 || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: poc-linux-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+          retention-days: 14
