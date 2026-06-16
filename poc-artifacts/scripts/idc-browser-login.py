@@ -48,6 +48,7 @@ from __future__ import annotations  # lazy annotations → run on Python 3.7+ (s
 import argparse
 import json
 import os
+import re
 import sys
 
 # Match IDCLoginBrowser's 5-minute page budget; IdC redirects can be slow.
@@ -126,11 +127,10 @@ def drive_login(url: str, username: str, password: str) -> None:
             # Step 0 (device-code flow only): the "Confirm and continue" / "Verify" page.
             # Because the extension passes ?user_code=XXXX-XXXX the code is pre-filled, so we
             # just confirm. Best-effort: skip silently if this page isn't shown.
+            # NOTE: Playwright's name= accepts a str or re.Pattern only — NOT a callable.
             try:
                 confirm = page.get_by_role(
-                    "button", name=lambda n: bool(n) and any(
-                        k in n for k in ("Confirm", "Continue", "Verify", "Next")
-                    ),
+                    "button", name=re.compile(r"Confirm|Continue|Verify|Next|Allow", re.I)
                 )
                 confirm.first.click(timeout=15_000)
                 log("Clicked device-code confirm/continue.")
@@ -169,21 +169,19 @@ def drive_login(url: str, username: str, password: str) -> None:
 
 
 def _click_allow(page) -> bool:
-    """IDCLoginBrowser's layered fallback: testid → text → scan all buttons."""
-    from playwright.sync_api import TimeoutError as PWTimeout
-
+    """IDCLoginBrowser's layered fallback: testid → role+name regex."""
     try:
         page.click("button[data-testid=allow-access-button]", timeout=30_000)
         return True
-    except PWTimeout:
+    except Exception:  # noqa: BLE001 — any miss falls through to the text fallback
         pass
-    for label in ("Allow access", "Allow", "Authorize", "Accept"):
-        try:
-            page.get_by_role("button", name=label).first.click(timeout=5_000)
-            return True
-        except PWTimeout:
-            continue
-    return False
+    try:
+        page.get_by_role(
+            "button", name=re.compile(r"Allow access|Allow|Authorize|Accept", re.I)
+        ).first.click(timeout=10_000)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def main() -> None:
