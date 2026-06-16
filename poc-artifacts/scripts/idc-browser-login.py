@@ -57,9 +57,21 @@ NAV_TIMEOUT_MS = 60_000
 STEP_TIMEOUT_MS = 30_000
 
 
+# Mirror every log line to a file too, so output survives even if the caller kills us
+# (execFileSync buffers stdout/stderr until exit; a killed process loses it). The workflow
+# uploads .test-reports/ as an artifact, so point IDC_LOG_FILE there.
+_LOG_FILE = os.environ.get("IDC_LOG_FILE")
+
+
 def log(msg: str) -> None:
-    # Stderr so it never pollutes anything a caller might parse on stdout.
-    print(f"[idc-browser-login] {msg}", file=sys.stderr, flush=True)
+    line = f"[idc-browser-login] {msg}"
+    print(line, file=sys.stderr, flush=True)
+    if _LOG_FILE:
+        try:
+            with open(_LOG_FILE, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _region_from_arn(secret_id: str) -> str | None:

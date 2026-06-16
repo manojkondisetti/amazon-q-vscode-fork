@@ -69,6 +69,9 @@ jobs:
       AMAZONQ_TEST_SECRET: ${{ vars.AMAZONQ_TEST_SECRET }}
       AWS_TOOLKIT_AUTOMATION: "ci"   # must be != "local" to take the CI auth path
       # AUTH_UTIL_LAMBDA_ARN intentionally unset — local browser path needs no Lambda.
+      # Driver diagnostics → .test-reports/ (uploaded as an artifact, survives a kill).
+      IDC_LOG_FILE: "${{ github.workspace }}/packages/amazonq/.test-reports/idc-browser-login.log"
+      IDC_DUMP_HTML: "${{ github.workspace }}/packages/amazonq/.test-reports/idc-page"
     steps:
       - uses: actions/checkout@v4
 
@@ -115,6 +118,8 @@ jobs:
       # Python driver signs in. Hard-fails on test failure — deliberately NOT continue-on-error.
       - name: AUTH E2E (Xvfb :99)
         run: |
+          # Ensure the driver's diagnostics dir exists before the hook writes to it.
+          mkdir -p packages/amazonq/.test-reports
           Xvfb :99 -screen 0 1920x1080x24 >/tmp/xvfb.log 2>&1 &
           export DISPLAY=:99
           sleep 3
@@ -127,6 +132,7 @@ jobs:
           name: poc-e2e-auth-reports-${{ github.run_id }}
           path: |
             .test-reports/
+            packages/amazonq/.test-reports/
             /tmp/xvfb.log
           if-no-files-found: warn
           retention-days: 14

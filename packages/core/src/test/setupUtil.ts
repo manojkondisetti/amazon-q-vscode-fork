@@ -257,6 +257,9 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
                         if (process.env['IDC_USERNAME']) {
                             localArgs.push('--username', process.env['IDC_USERNAME'])
                         }
+                        if (process.env['IDC_DUMP_HTML']) {
+                            localArgs.push('--dump-html', process.env['IDC_DUMP_HTML'])
+                        }
                         // Capture stdout+stderr so the driver's [idc-browser-login] logs and any
                         // Python traceback surface in the thrown error (the extension host does
                         // not propagate inherited stdio to the test reporter). Throws on non-zero
