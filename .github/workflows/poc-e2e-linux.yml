@@ -67,8 +67,13 @@ jobs:
 
       - run: npm ci
 
-      - name: Increase file watchers
-        run: echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p
+      # Best-effort: raise the inotify watcher limit. On CodeBuild the runner is in a
+      # container where this sysctl is read-only ("permission denied"), so make it
+      # non-fatal — it's a perf tweak, not a requirement for the test to run.
+      - name: Increase file watchers (best-effort)
+        run: |
+          echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf || true
+          sudo sysctl -p || true
 
       # Launch real VS Code under a virtual display and run the scoped E2E spec.
       # xvfb is required on Linux for the GUI (Windows would not need this).
