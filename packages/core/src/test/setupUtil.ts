@@ -281,11 +281,26 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
     // until the 300s test cap. Instead, eagerly stub openExternal for the whole hook lifetime
     // so ANY auth browser-open runs the local driver, regardless of which prompt variant shows.
     if (process.env['AUTH_UTIL_LOCAL_BROWSER']) {
+        // Two things are needed, and run 13 showed why one alone is not enough:
+        //   1. Stub openExternal so the browser-open runs the local driver (not a no-op).
+        //   2. CLICK the "Proceed To Browser" modal — openSsoPortalLink() blocks on that
+        //      modal and only calls openExternal once it's selected. Without the click the
+        //      modal sits unanswered until the 300s test cap (run 13's pending message).
         const openStub = patchObject(vscode.env, 'openExternal', async (target) => {
             runLocalBrowserLogin(target.toString(true), secret)
             return true
         })
-        return openStub
+        const sub = getTestWindow().onDidShowMessage((message) => {
+            if (message.items.length > 0 && message.items[0].title.match(new RegExp(proceedToBrowser))) {
+                message.items[0].select()
+            }
+        })
+        return {
+            dispose: () => {
+                sub.dispose()
+                openStub.dispose()
+            },
+        }
     }
 
     return getTestWindow().onDidShowMessage((message) => {
