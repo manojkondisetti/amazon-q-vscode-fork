@@ -75,13 +75,23 @@ jobs:
           echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf || true
           sudo sysctl -p || true
 
-      # Launch real VS Code under a virtual display and run the scoped E2E spec.
-      # xvfb is required on Linux for the GUI (Windows would not need this).
+      # Install Xvfb. The CodeBuild standard image is Amazon Linux (dnf/yum), NOT Ubuntu,
+      # so coactions/setup-xvfb (which runs `apt-get`) fails with "apt-get: command not
+      # found". Install via dnf instead — mirrors the internal MaxDome test-entry.sh.
+      - name: Install Xvfb (Amazon Linux)
+        run: sudo dnf install -y xorg-x11-server-Xvfb || sudo yum install -y xorg-x11-server-Xvfb
+
+      # Launch real VS Code under a manual virtual display and run the scoped E2E spec.
+      # (MaxDome pattern: start Xvfb on :99, export DISPLAY, then run.) xvfb is required on
+      # Linux for the GUI; Windows would not need this.
       # Hard-fails on test failure — deliberately NOT continue-on-error.
-      - name: E2E (xvfb)
-        uses: coactions/setup-xvfb@v1
-        with:
-          run: npm run testE2E -w packages/amazonq
+      - name: E2E (Xvfb :99)
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 >/tmp/xvfb.log 2>&1 &
+          export DISPLAY=:99
+          # give Xvfb a moment to come up
+          sleep 3
+          npm run testE2E -w packages/amazonq
 
       - name: Upload test reports
         if: always()
