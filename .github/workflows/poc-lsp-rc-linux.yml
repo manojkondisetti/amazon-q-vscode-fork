@@ -53,7 +53,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       RC_PLATFORM: ${{ inputs.platform }}
-      RC_DEST: ${{ runner.temp }}/rc-lsp
+      RC_DEST: ${{ github.workspace }}/rc-lsp
     steps:
       - name: Checkout (for the poc-artifacts scripts)
         uses: actions/checkout@v4
