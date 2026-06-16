@@ -236,17 +236,20 @@ function runLocalBrowserLogin(urlString: string, secret: string): void {
     if (process.env['IDC_USERNAME']) {
         localArgs.push('--username', process.env['IDC_USERNAME'])
     }
-    // Diagnostics → .test-reports/ (cwd is packages/amazonq; the workflow uploads it). Set
-    // here, not via env, because the extension host receives only a curated env.
+    // Diagnostics → /tmp (absolute, cwd-independent). Earlier runs wrote to a relative
+    // .test-reports/ that the artifact upload never captured (the extension host's cwd is
+    // not where we assumed); /tmp/xvfb.log uploads reliably, so co-locate there and add the
+    // glob to the workflow's upload paths.
+    const outDir = '/tmp/idc-diag'
     try {
-        fs2.mkdirSync('.test-reports', { recursive: true })
+        fs2.mkdirSync(outDir, { recursive: true })
     } catch {
         // ignore
     }
-    localArgs.push('--dump-html', '.test-reports/idc-page')
+    localArgs.push('--dump-html', `${outDir}/idc-page`)
     const writeTrace = (label: string, out: string) => {
         try {
-            fs2.writeFileSync(`.test-reports/idc-browser-login.${label}.log`, out)
+            fs2.writeFileSync(`${outDir}/idc-browser-login.${label}.log`, out)
         } catch {
             // ignore
         }

@@ -133,6 +133,7 @@ jobs:
           path: |
             .test-reports/
             packages/amazonq/.test-reports/
+            /tmp/idc-diag/
             /tmp/xvfb.log
           if-no-files-found: warn
           retention-days: 14
