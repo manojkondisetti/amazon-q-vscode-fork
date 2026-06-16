@@ -61,7 +61,9 @@ jobs:
       TEST_FILE: ${{ inputs.test_file }}
       # ── Auth wiring (local browser, no Lambda) ──
       AUTH_UTIL_LOCAL_BROWSER: "1"
-      AUTH_UTIL_LOCAL_BROWSER_SCRIPT: "poc-artifacts/scripts/idc-browser-login.py"
+      # Absolute path: the hook runs from packages/amazonq (npm -w), so a repo-relative path
+      # would resolve to packages/amazonq/poc-artifacts/... and not be found.
+      AUTH_UTIL_LOCAL_BROWSER_SCRIPT: "${{ github.workspace }}/poc-artifacts/scripts/idc-browser-login.py"
       TEST_SSO_STARTURL: ${{ vars.TEST_SSO_STARTURL }}
       TEST_SSO_REGION: ${{ vars.TEST_SSO_REGION }}
       AMAZONQ_TEST_SECRET: ${{ vars.AMAZONQ_TEST_SECRET }}
