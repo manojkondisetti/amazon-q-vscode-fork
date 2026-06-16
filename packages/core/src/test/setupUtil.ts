@@ -247,35 +247,25 @@ function runLocalBrowserLogin(urlString: string, secret: string): void {
         // ignore
     }
     localArgs.push('--dump-html', `${outDir}/idc-page`)
-    const writeTrace = (label: string, out: string) => {
-        try {
-            fs2.writeFileSync(`${outDir}/idc-browser-login.${label}.log`, out)
-        } catch {
-            // ignore
-        }
-    }
+    // The driver writes its own log to this file (independent of pipes), so the trace
+    // survives even if we SIGKILL it on timeout. (run 16 hung 1h: a `bash -c … 2>&1`
+    // wrapper meant the timeout SIGTERM'd bash while orphaned chromium kept the stdout
+    // pipe open, so execFileSync never returned. Invoke python3 directly + SIGKILL.)
+    localArgs.push('--log-file', `${outDir}/idc-browser-login.log`)
     try {
-        // The driver logs to STDERR (and HTML dumps to disk). Redirect stderr→stdout (2>&1
-        // semantics) so writeTrace captures the [idc-browser-login] log lines, not just the
-        // empty stdout we saw in run 15.
-        const out = execFileSync(
-            'bash',
-            ['-c', `python3 "$@" 2>&1`, 'bash', script, ...localArgs],
-            {
-                encoding: 'utf-8',
-                stdio: ['ignore', 'pipe', 'pipe'],
-                // Kill the driver before Mocha's 300s per-test cap so its buffered logs come
-                // back here instead of being lost when the hook is force-killed.
-                timeout: 240_000,
-            }
-        )
-        writeTrace('ok', out)
-        getLogger().info('idc-browser-login output:\n%s', out)
+        execFileSync('python3', [script, ...localArgs], {
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            // Kill the driver before Mocha's 300s per-test cap. SIGKILL (not the default
+            // SIGTERM) so chromium children can't keep the process group alive.
+            timeout: 240_000,
+            killSignal: 'SIGKILL',
+        })
+        getLogger().info('idc-browser-login completed; see %s', `${outDir}/idc-browser-login.log`)
     } catch (e: any) {
         const stdout = e?.stdout?.toString?.() ?? ''
         const stderr = e?.stderr?.toString?.() ?? ''
-        const killed = e?.killed ? ' (driver hit the 240s timeout)' : ''
-        writeTrace('fail', `exit=${e?.status} killed=${e?.killed}\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`)
+        const killed = e?.killed ? ' (driver hit the 240s timeout — SIGKILLed)' : ''
         throw new Error(
             `idc-browser-login failed (exit ${e?.status})${killed}:\n` +
                 `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`

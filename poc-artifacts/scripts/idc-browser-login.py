@@ -58,9 +58,14 @@ STEP_TIMEOUT_MS = 30_000
 
 
 # Mirror every log line to a file too, so output survives even if the caller kills us
-# (execFileSync buffers stdout/stderr until exit; a killed process loses it). The workflow
-# uploads .test-reports/ as an artifact, so point IDC_LOG_FILE there.
+# (execFileSync buffers stdout/stderr until exit; a killed process loses it). Set via env
+# (IDC_LOG_FILE) or --log-file; the CLI flag wins since the extension host strips most env.
 _LOG_FILE = os.environ.get("IDC_LOG_FILE")
+
+
+def set_log_file(path: str) -> None:
+    global _LOG_FILE
+    _LOG_FILE = path
 
 
 def log(msg: str) -> None:
@@ -336,8 +341,12 @@ def main() -> None:
                     help="Run the browser headed (local debugging — watch the page live).")
     ap.add_argument("--dump-html", default=None, metavar="PREFIX",
                     help="Write page HTML at each step to <PREFIX>.<step>.html (selector debugging).")
+    ap.add_argument("--log-file", default=None,
+                    help="Mirror [idc-browser-login] log lines to this file (survives a kill).")
     args = ap.parse_args()
 
+    if args.log_file:
+        set_log_file(args.log_file)
     username, password = resolve_credentials(args)
     drive_login(args.url, username, password, headed=args.headed, dump_html=args.dump_html)
 
