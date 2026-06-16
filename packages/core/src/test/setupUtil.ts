@@ -257,13 +257,28 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
                         if (process.env['IDC_USERNAME']) {
                             localArgs.push('--username', process.env['IDC_USERNAME'])
                         }
-                        if (process.env['IDC_DUMP_HTML']) {
-                            localArgs.push('--dump-html', process.env['IDC_DUMP_HTML'])
+                        // Diagnostics: dump page HTML alongside the test reports. The hook's cwd
+                        // is packages/amazonq, whose .test-reports/ the workflow uploads. We set
+                        // this here (not via env) because the extension host receives only a
+                        // curated env, so IDC_* vars set at the job level don't reach the driver.
+                        const fs2 = require('fs') as typeof import('fs')
+                        try {
+                            fs2.mkdirSync('.test-reports', { recursive: true })
+                        } catch {
+                            // ignore
                         }
+                        localArgs.push('--dump-html', '.test-reports/idc-page')
                         // Capture stdout+stderr so the driver's [idc-browser-login] logs and any
-                        // Python traceback surface in the thrown error (the extension host does
-                        // not propagate inherited stdio to the test reporter). Throws on non-zero
-                        // exit — a broken login must hard-fail.
+                        // Python traceback are visible. Write them to a file on EVERY path (the
+                        // extension host doesn't propagate inherited stdio to the reporter, and on
+                        // success nothing is thrown) so the artifact always has the trace.
+                        const writeTrace = (label: string, out: string) => {
+                            try {
+                                fs2.writeFileSync(`.test-reports/idc-browser-login.${label}.log`, out)
+                            } catch {
+                                // ignore
+                            }
+                        }
                         try {
                             const out = execFileSync('python3', [script, ...localArgs], {
                                 encoding: 'utf-8',
@@ -273,11 +288,13 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
                                 // hook is force-killed.
                                 timeout: 240_000,
                             })
+                            writeTrace('ok', out)
                             getLogger().info('idc-browser-login output:\n%s', out)
                         } catch (e: any) {
                             const stdout = e?.stdout?.toString?.() ?? ''
                             const stderr = e?.stderr?.toString?.() ?? ''
                             const killed = e?.killed ? ' (driver hit the 240s timeout)' : ''
+                            writeTrace('fail', `exit=${e?.status} killed=${e?.killed}\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`)
                             throw new Error(
                                 `idc-browser-login failed (exit ${e?.status})${killed}:\n` +
                                     `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
