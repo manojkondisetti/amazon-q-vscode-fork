@@ -67,6 +67,10 @@ jobs:
       TEST_SSO_STARTURL: ${{ vars.TEST_SSO_STARTURL }}
       TEST_SSO_REGION: ${{ vars.TEST_SSO_REGION }}
       AMAZONQ_TEST_SECRET: ${{ vars.AMAZONQ_TEST_SECRET }}
+      # Static bearer token path (registerStaticBearerToken): the spec injects this token into
+      # the SSO token provider instead of driving the browser login. The connection is still
+      # built by connectToEnterpriseSso (needs TEST_SSO_*); only token-minting is bypassed.
+      BEARER_TOKEN: ${{ secrets.BEARER_TOKEN }}
       AWS_TOOLKIT_AUTOMATION: "ci"   # must be != "local" to take the CI auth path
       # AUTH_UTIL_LAMBDA_ARN intentionally unset — local browser path needs no Lambda.
       # Driver diagnostics → .test-reports/ (uploaded as an artifact, survives a kill).
