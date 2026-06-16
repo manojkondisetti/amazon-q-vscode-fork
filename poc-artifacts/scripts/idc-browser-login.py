@@ -110,19 +110,33 @@ def resolve_credentials(args) -> tuple[str, str]:
     return data["username"], data["password"]
 
 
-def drive_login(url: str, username: str, password: str) -> None:
+def drive_login(url: str, username: str, password: str, headed: bool = False,
+                dump_html: str | None = None) -> None:
     from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
 
     with sync_playwright() as p:
-        # Chromium headless. --no-sandbox: the CodeBuild runner is an unprivileged
-        # container, same constraint that made fix #4 (Xvfb) necessary in the runbook.
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        # Chromium. headless by default; --headed for local debugging (watch the page live).
+        # --no-sandbox: the CodeBuild runner is an unprivileged container, same constraint
+        # that made fix #4 (Xvfb) necessary in the runbook.
+        browser = p.chromium.launch(headless=not headed, args=["--no-sandbox"])
         page = browser.new_page()
         page.set_default_timeout(STEP_TIMEOUT_MS)
         page.set_default_navigation_timeout(NAV_TIMEOUT_MS)
+
+        def maybe_dump(tag: str) -> None:
+            if dump_html:
+                path = f"{dump_html}.{tag}.html"
+                try:
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(page.content())
+                    log(f"Wrote page HTML: {path}")
+                except Exception as e:  # noqa: BLE001
+                    log(f"Could not write {path}: {e}")
+
         try:
             log(f"Navigating to verification URL: {url.split('?')[0]}?…")
             page.goto(url, wait_until="domcontentloaded")
+            maybe_dump("0-landing")
 
             # Step 0 (device-code flow only): the "Confirm and continue" / "Verify" page.
             # Because the extension passes ?user_code=XXXX-XXXX the code is pre-filled, so we
@@ -141,21 +155,27 @@ def drive_login(url: str, username: str, password: str) -> None:
                 log("No device-code confirm page (or already past it); continuing.")
             _dump_state(page, "after device-code confirm")
 
-            # Step 1: username  (IDCLoginBrowser: #awsui-input-0 → submit)
+            # The IdC sign-in (signin.aws/platform) is a React/awsui multi-step form:
+            #   page 1: username  (#awsui-input-0) → "Next"
+            #   page 2: password  (#awsui-input-1) → "Sign in"
+            # awsui inputs are React-controlled: page.fill() sets .value but may not fire the
+            # state update that enables the submit button, so we type real key events and
+            # click the button BY ITS TEXT (Next / Sign in), not a generic type=submit.
             log("Entering username.")
-            page.fill("#awsui-input-0", username, timeout=STEP_TIMEOUT_MS)
-            page.click("button[type=submit]")
-            page.wait_for_timeout(2_000)
+            _type_into(page, "#awsui-input-0", username)
+            maybe_dump("1-username-page")
+            _click_button(page, r"Next|Continue")
+            page.wait_for_timeout(3_000)
             _dump_state(page, "after username submit")
 
-            # Step 2: password. On some IdC variants the password lives on a NEW page where
-            # the first input is #awsui-input-0 again; on others it's #awsui-input-1 on the
-            # same page. Try a type=password field first, then fall back to the awsui ids.
+            # Step 2: password (a NEW page; field is #awsui-input-1, type=password).
             log("Entering password.")
-            _fill_password(page, password)
-            page.click("button[type=submit]")
-            page.wait_for_timeout(3_000)
+            _type_into(page, "input[type=password]", password)
+            maybe_dump("2-password-page")
+            _click_button(page, r"Sign in|Submit|Log in")
+            page.wait_for_timeout(4_000)
             _dump_state(page, "after password submit")
+            maybe_dump("3-after-password")
 
             # Step 3: authorization "Allow access". May be absent on a re-auth where the
             # grant is remembered — mirror IDCLoginBrowser and don't fail if it's missing.
@@ -191,33 +211,50 @@ def _dump_state(page, where: str) -> None:
     except Exception:  # noqa: BLE001
         title = "<unavailable>"
     log(f"[{where}] url={page.url} title={title!r}")
-    # Surface any visible alert/error/role=alert text (best-effort, short).
-    for sel in ("[role=alert]", ".awsui-form-field-error", "text=/incorrect|invalid|error|"
-                "multi-factor|MFA|verification code/i"):
-        try:
-            loc = page.locator(sel)
-            n = loc.count()
-            for i in range(min(n, 3)):
-                txt = (loc.nth(i).inner_text(timeout=2_000) or "").strip()
-                if txt:
-                    log(f"[{where}] alert: {txt[:200]}")
-        except Exception:  # noqa: BLE001
-            pass
+    # Surface any visible error/alert text. IdC renders auth failures as plain text (e.g.
+    # "Something doesn't compute / We couldn't verify your sign-in credentials") — not a
+    # [role=alert] — and MFA as "verification code", so match on the body text too.
+    patterns = re.compile(
+        r"couldn't verify|doesn't compute|incorrect|invalid|wrong password|"
+        r"authentication failed|try again|multi-factor|verification code|expired",
+        re.I,
+    )
+    try:
+        body = (page.locator("body").inner_text(timeout=3_000) or "")
+        hits = {m.group(0) for m in patterns.finditer(body)}
+        if hits:
+            # Pull a short readable line around the first hit for context.
+            idx = body.lower().find(next(iter(hits)).lower())
+            snippet = re.sub(r"\s+", " ", body[max(0, idx - 120): idx + 120]).strip()
+            log(f"[{where}] page message: …{snippet}…")
+    except Exception:  # noqa: BLE001
+        pass
 
 
-def _fill_password(page, password: str) -> None:
-    """Fill the password field, tolerant of which awsui id / page it lands on."""
-    # Prefer a real password input (works regardless of awsui index or separate page).
-    for sel in ("input[type=password]", "#awsui-input-1", "#awsui-input-0"):
-        try:
-            loc = page.locator(sel)
-            loc.wait_for(state="visible", timeout=15_000)
-            loc.fill(password)
-            log(f"Filled password into {sel}.")
-            return
-        except Exception:  # noqa: BLE001
-            continue
-    raise RuntimeError("Could not find a password field (input[type=password] / #awsui-input-*)")
+def _type_into(page, selector: str, value: str) -> None:
+    """Type real key events into an awsui (React-controlled) input.
+
+    page.fill() sets .value directly, which awsui's React state often does not observe, so
+    the submit button stays disabled/inert. click()+press_sequentially() fires the focus +
+    input + keydown events the component listens for.
+    """
+    loc = page.locator(selector).first
+    loc.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+    loc.click()
+    loc.fill("")  # clear any prefill
+    loc.press_sequentially(value, delay=15)
+    log(f"Typed into {selector}.")
+
+
+def _click_button(page, name_regex: str) -> None:
+    """Click an awsui button by its visible text (Next / Sign in), with a type=submit fallback."""
+    try:
+        page.get_by_role("button", name=re.compile(name_regex, re.I)).first.click(timeout=15_000)
+        log(f"Clicked button matching /{name_regex}/.")
+        return
+    except Exception:  # noqa: BLE001
+        page.click("button[type=submit]", timeout=15_000)
+        log("Clicked button[type=submit] (text match failed).")
 
 
 def _click_allow(page) -> bool:
@@ -248,10 +285,14 @@ def main() -> None:
                          "name (a full ARN supplies it automatically).")
     ap.add_argument("--username", default=None, help="Override / pick a user (multi-user secret).")
     ap.add_argument("--password", default=None, help="Override password (skips Secrets Manager).")
+    ap.add_argument("--headed", action="store_true",
+                    help="Run the browser headed (local debugging — watch the page live).")
+    ap.add_argument("--dump-html", default=None, metavar="PREFIX",
+                    help="Write page HTML at each step to <PREFIX>.<step>.html (selector debugging).")
     args = ap.parse_args()
 
     username, password = resolve_credentials(args)
-    drive_login(args.url, username, password)
+    drive_login(args.url, username, password, headed=args.headed, dump_html=args.dump_html)
 
 
 if __name__ == "__main__":
