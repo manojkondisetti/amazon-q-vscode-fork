@@ -257,9 +257,24 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
                         if (process.env['IDC_USERNAME']) {
                             localArgs.push('--username', process.env['IDC_USERNAME'])
                         }
-                        // Inherit stdio so the driver's [idc-browser-login] logs stream to CI.
-                        // Throws (fails the test) on non-zero exit — a broken login must hard-fail.
-                        execFileSync('python3', [script, ...localArgs], { stdio: 'inherit' })
+                        // Capture stdout+stderr so the driver's [idc-browser-login] logs and any
+                        // Python traceback surface in the thrown error (the extension host does
+                        // not propagate inherited stdio to the test reporter). Throws on non-zero
+                        // exit — a broken login must hard-fail.
+                        try {
+                            const out = execFileSync('python3', [script, ...localArgs], {
+                                encoding: 'utf-8',
+                                stdio: ['ignore', 'pipe', 'pipe'],
+                            })
+                            getLogger().info('idc-browser-login output:\n%s', out)
+                        } catch (e: any) {
+                            const stdout = e?.stdout?.toString?.() ?? ''
+                            const stderr = e?.stderr?.toString?.() ?? ''
+                            throw new Error(
+                                `idc-browser-login failed (exit ${e?.status}):\n` +
+                                    `--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`
+                            )
+                        }
                     } else {
                         // Default: the existing auth Lambda path (unchanged). Drop the user_code
                         // param since the auth lambda does not support it yet, and keeping it
