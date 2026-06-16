@@ -262,7 +262,10 @@ export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UT
                         const verificationUri = urlString.split('?')[0]
                         const userCode = new URLSearchParams(urlString.split('?')[1]).get('user_code')
 
-                        await invokeLambda(lambdaId, {
+                        // lambdaId is guaranteed defined here: we only reach this else when
+                        // AUTH_UTIL_LOCAL_BROWSER is unset, and the guard above already threw if
+                        // lambdaId was also unset. TS can't narrow across that compound guard.
+                        await invokeLambda(lambdaId!, {
                             secret,
                             userCode,
                             verificationUri,
