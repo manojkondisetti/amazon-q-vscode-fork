@@ -8,6 +8,7 @@
  */
 import vscode from 'vscode'
 import { getLogger } from '../shared/logger'
+import { TopicLogger } from '../shared/logger/logger'
 import { ToolkitLogger } from '../shared/logger/toolkitLogger'
 import { mapTestErrors, normalizeError, patchObject, setRunnableTimeout } from '../test/setupUtil'
 import { getTestWindow, resetTestWindow } from '../test/shared/vscode/window'
@@ -45,10 +46,15 @@ export async function mochaGlobalSetup(extensionId: string) {
         // Needed for getLogger().
         await vscode.extensions.getExtension(extensionId)?.activate()
 
-        // Log as much as possible, useful for debugging integration tests.
+        // Log as much as possible, useful for debugging integration/e2e tests.
         getLogger().setLogLevel('debug')
-        if (getLogger() instanceof ToolkitLogger) {
-            ;(getLogger() as ToolkitLogger).logToConsole()
+        // getLogger() returns a TopicLogger wrapper, never a ToolkitLogger directly, so the old
+        // `instanceof ToolkitLogger` guard was always false and toolkit logs never reached stdout
+        // (CI operators couldn't see auth/network errors). Reach the underlying logger via the
+        // TopicLogger.logger getter and route it to the console so logs surface in CI stdout.
+        const underlyingLogger = getLogger() instanceof TopicLogger ? (getLogger() as TopicLogger).logger : getLogger()
+        if (underlyingLogger instanceof ToolkitLogger) {
+            underlyingLogger.logToConsole()
         }
 
         const fakeContext = await FakeExtensionContext.create()

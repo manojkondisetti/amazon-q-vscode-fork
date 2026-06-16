@@ -15,8 +15,14 @@ import {
     toTextEditor,
     using,
 } from 'aws-core-vscode/test'
-import { RecommendationHandler, RecommendationService, session } from 'aws-core-vscode/codewhisperer'
-import { Commands, globals, sleep, waitUntil, collectionUtil } from 'aws-core-vscode/shared'
+import {
+    AuthUtil,
+    FeatureConfigProvider,
+    RecommendationHandler,
+    RecommendationService,
+    session,
+} from 'aws-core-vscode/codewhisperer'
+import { Commands, getLogger, globals, sleep, waitUntil, collectionUtil } from 'aws-core-vscode/shared'
 import { loginToIdC, isSSOTestEnvironmentAvailable } from '../amazonq/utils/setup'
 
 // These tests require SSO auth infrastructure (auth Lambda + Secrets Manager) only available in internal CI.
@@ -52,7 +58,40 @@ describe('Amazon Q Inline', async function () {
                 await loginToIdC()
             })
         }
+        await logAuthDiagnostics()
     })
+
+    /**
+     * Surfaces the two things that decide whether inline completions can succeed, so a CI
+     * failure is diagnosable from stdout instead of just "Suggestion did not show":
+     *  1. Auth state — does the injected token resolve to a connected Amazon Q connection, and is
+     *     a region profile selected? (validates the token/connection, not the completion call).
+     *  2. Pre-Flare rollback group — 'treatment' routes inline completions through the in-process
+     *     RecommendationService (which this spec asserts on); 'control' (default) routes them
+     *     through the Flare LSP, where the in-process `session` stays empty regardless of auth.
+     */
+    async function logAuthDiagnostics() {
+        const logger = getLogger()
+        try {
+            const authState = await AuthUtil.instance.getChatAuthState()
+            const profile = AuthUtil.instance.regionProfileManager.activeRegionProfile
+            const rollbackGroup = FeatureConfigProvider.instance.getPreFlareRollbackGroup()
+            logger.info('[inline-e2e diagnostics] chatAuthState=%O', authState)
+            logger.info(
+                '[inline-e2e diagnostics] amazonQ connected=%s | activeRegionProfile=%O | preFlareRollbackGroup=%s (treatment=in-process, control=LSP)',
+                authState.amazonQ,
+                profile,
+                rollbackGroup
+            )
+            // Mirror to console too, so it shows even if the toolkit logger console route is unavailable.
+            // eslint-disable-next-line aws-toolkits/no-console-log
+            console.log(
+                `[inline-e2e diagnostics] amazonQ=${authState.amazonQ} profileRegion=${profile?.region ?? 'none'} preFlareRollbackGroup=${rollbackGroup}`
+            )
+        } catch (e) {
+            logger.error('[inline-e2e diagnostics] failed to collect auth diagnostics: %s', (e as Error).message)
+        }
+    }
 
     after(function () {
         tokenDisposable?.dispose()
