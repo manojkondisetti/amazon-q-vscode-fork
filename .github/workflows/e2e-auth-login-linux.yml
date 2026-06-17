@@ -65,6 +65,9 @@ jobs:
             TEST_GREP: ${{ inputs.test_grep }}
             # Must be != "local" to take the CI auth path (setupUtil.ts, setup.ts).
             AWS_TOOLKIT_AUTOMATION: 'ci'
+            # Force the in-process inline-completion path so e2e tests that assert on
+            # RecommendationService/session work regardless of the backend A/B flag.
+            AMAZONQ_INLINE_ROLLBACK_GROUP: 'treatment'
             # ── Real-login wiring (local browser, no Lambda) ──
             AUTH_UTIL_LOCAL_BROWSER: '1'
             # Absolute path: the hook runs from packages/amazonq (npm -w), so a repo-relative

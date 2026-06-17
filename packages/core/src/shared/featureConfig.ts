@@ -108,6 +108,11 @@ export class FeatureConfigProvider {
     }
 
     getPreFlareRollbackGroup(): 'control' | 'treatment' | 'default' {
+        const envOverride = process.env['AMAZONQ_INLINE_ROLLBACK_GROUP']
+        if (envOverride === 'treatment' || envOverride === 'control') {
+            return envOverride
+        }
+
         const variationBid = this.featureConfigs.get(Features.preFlareRollbackBIDFeature)?.variation
         const variationIdc = this.featureConfigs.get(Features.preFlareRollbackIDCFeature)?.variation
         if (variationBid === 'TREATMENT' || variationIdc === 'TREATMENT') {
