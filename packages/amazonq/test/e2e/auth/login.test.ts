@@ -22,11 +22,10 @@ import { loginToIdC, isSSOTestEnvironmentAvailable } from '../amazonq/utils/setu
  *   browser approval locally via a headless Playwright script (poc-artifacts/scripts/
  *   idc-browser-login.py), using the USER_NAME / PASSWORD credentials. No Lambda, no Secrets
  *   Manager, no AWS credentials.
- * - A fresh connection has no persisted region profile, and `connectToEnterpriseSso` does not
- *   auto-select one (`restoreRegionProfile` only restores a previously persisted selection), so
- *   we explicitly discover (`listRegionProfile`, a real backend call) and select the first
- *   profile (`switchRegionProfile`). This satisfies `requireProfileSelection()`, which otherwise
- *   keeps every feature at `pendingProfileSelection` instead of `connected`.
+ * `loginToIdC()` performs the login AND selects a region profile (a fresh connection has none,
+ * and `connectToEnterpriseSso` does not auto-select one); without a selected profile
+ * `requireProfileSelection()` keeps every feature at `pendingProfileSelection` instead of
+ * `connected`. This spec just asserts the resulting state.
  *
  * Requires TEST_SSO_STARTURL / TEST_SSO_REGION (to ungate + build the connection) and, in CI,
  * USER_NAME / PASSWORD + AUTH_UTIL_LOCAL_BROWSER for the local browser driver.
@@ -41,15 +40,6 @@ describe('Amazon Q Login', function () {
 
         await using(registerAuthHook('amazonq-test-account'), async () => {
             await loginToIdC()
-
-            // Discover and select a region profile (a fresh connection has none persisted, and
-            // connectToEnterpriseSso does not auto-select). listRegionProfile is a real backend
-            // call that succeeds only with a valid token.
-            const profiles = await AuthUtil.instance.regionProfileManager.listRegionProfile()
-            getLogger().info('[login-e2e] discovered %d region profile(s)', profiles.length)
-            assert.ok(profiles.length > 0, 'Expected at least one Q Developer region profile')
-
-            await AuthUtil.instance.regionProfileManager.switchRegionProfile(profiles[0], 'user')
 
             const authState = await AuthUtil.instance.getChatAuthState()
             const profile = AuthUtil.instance.regionProfileManager.activeRegionProfile

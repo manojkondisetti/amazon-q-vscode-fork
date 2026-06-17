@@ -34,4 +34,28 @@ export async function loginToIdC() {
     }
 
     await AuthUtil.instance.connectToEnterpriseSso(startUrl, region)
+    await selectRegionProfile()
+}
+
+/**
+ * A freshly-created IdC connection has no region profile selected, and `connectToEnterpriseSso`
+ * does not auto-select one (`restoreRegionProfile` only restores a previously persisted choice,
+ * and the test harness clears globalState between tests). Without a selected profile,
+ * `requireProfileSelection()` keeps every Amazon Q feature at `pendingProfileSelection` instead
+ * of `connected`, so completions never resolve an endpoint.
+ *
+ * Discover the available profiles (a real backend call that only succeeds with a valid token)
+ * and select the first one, so every e2e spec that logs in ends up fully connected. Idempotent:
+ * skips if a profile is already active.
+ */
+async function selectRegionProfile() {
+    const profileManager = AuthUtil.instance.regionProfileManager
+    if (profileManager.activeRegionProfile !== undefined) {
+        return
+    }
+    const profiles = await profileManager.listRegionProfile()
+    if (profiles.length === 0) {
+        throw new Error('No Q Developer region profiles available for the test user')
+    }
+    await profileManager.switchRegionProfile(profiles[0], 'user')
 }
