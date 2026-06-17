@@ -87,11 +87,18 @@ jobs:
                   node-version: '18.x'
                   cache: 'npm'
 
-            - name: Set up Visual Studio Build Tools (Windows)
-              if: runner.os == 'Windows'
-              uses: ilammy/msvc-dev-cmd@v1
-
-            - run: npm ci
+            - name: Install dependencies
+              shell: bash
+              run: |
+                  if [ "$RUNNER_OS" = "Windows" ]; then
+                    # Skip native module compilation (registry-js) on Windows — node-gyp
+                    # can't find VS on newer runners. The module is optional (credential
+                    # storage) and not needed for test execution.
+                    npm ci --ignore-scripts
+                    npm rebuild --ignore registry-js || true
+                  else
+                    npm ci
+                  fi
 
             - name: Set up Python + Playwright (Chromium)
               shell: bash
