@@ -87,12 +87,18 @@ jobs:
                   node-version: '18.x'
                   cache: 'npm'
 
-            - name: Configure node-gyp for VS 2025 (Windows)
-              if: runner.os == 'Windows'
+            - name: Install dependencies
               shell: bash
-              run: echo "GYP_MSVS_VERSION=2022" >> "$GITHUB_ENV"
-
-            - run: npm ci
+              run: |
+                  if [ "$RUNNER_OS" = "Windows" ]; then
+                    # node-gyp can't find VS 2025 on windows-latest for native modules
+                    # (registry-js). Install without scripts, then run the root prepare
+                    # script which builds the dist/ dirs needed for compilation.
+                    npm ci --ignore-scripts
+                    npm run prepare
+                  else
+                    npm ci
+                  fi
 
             - name: Set up Python + Playwright (Chromium)
               shell: bash
