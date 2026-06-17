@@ -86,6 +86,10 @@ jobs:
               with:
                   node-version: '18.x'
 
+            - name: Set up Visual Studio Build Tools (Windows)
+              if: runner.os == 'Windows'
+              uses: ilammy/msvc-dev-cmd@v1
+
             - run: npm ci
 
             - name: Set up Python + Playwright (Chromium)
@@ -93,7 +97,7 @@ jobs:
               run: |
                   PY="python3"
                   if [ "$RUNNER_OS" = "Windows" ]; then PY="python"; fi
-                  $PY -m pip install --user playwright
+                  $PY -m pip install --break-system-packages playwright
                   $PY -m playwright install --with-deps chromium
 
             # Linux-only: raise inotify watchers
