@@ -83,13 +83,6 @@ export async function runTests(
         timeout: 0,
     })
 
-    // Allow scoping a run to a subset of tests by title (e.g. a single `it()`) without
-    // committing a `.only`. `TEST_GREP` is a regex matched against the full test title.
-    const testGrep = process.env['TEST_GREP']
-    if (testGrep) {
-        mocha.grep(new RegExp(testGrep))
-    }
-
     const dist = path.resolve(root, 'dist')
     const rawTestFile = process.env['TEST_FILE']
     const testFile = rawTestFile?.replace(/\\/g, '/').replace('.ts', '.js')

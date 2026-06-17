@@ -5,9 +5,9 @@
 # (poc-artifacts/scripts/idc-browser-login.py). No auth Lambda, no Secrets Manager, no AWS
 # credentials, no static token.
 #
-# Default spec is the dedicated login test (test/e2e/auth/login.test.ts), which logs in and
-# asserts a connected, profile-selected Amazon Q connection — the first release-readiness check.
-# Point test_file at another spec (e.g. test/e2e/inline/inline.test.ts) to run it instead.
+# Default spec is the inline-completion suite (test/e2e/inline/inline.test.ts), which logs in
+# (via its own before() hook) and exercises automatic/manual inline suggestions. Point test_file
+# at another spec to run it instead.
 #
 # Prereqs:
 #   • Repo secrets:   USER_NAME, PASSWORD (the IdC test user the browser driver signs in as).
@@ -25,12 +25,7 @@ on:
                 required: true
                 # Resolved against packages/amazonq/dist/ with .ts->.js (core/src/test/testRunner.ts),
                 # so it must be relative to the package — NOT 'packages/amazonq/test/...'.
-                default: 'test/e2e/auth/login.test.ts'
-            test_grep:
-                description: 'Mocha grep — scope the run to tests whose title matches (blank = all in file)'
-                type: string
-                required: false
-                default: ''
+                default: 'test/e2e/inline/inline.test.ts'
             vscode_version:
                 description: 'VS Code version channel'
                 type: choice
@@ -59,10 +54,8 @@ jobs:
             NODE_OPTIONS: '--max-old-space-size=8192'
             AWS_TOOLKIT_TEST_CACHE_DIR: '/tmp/.vscode-test/'
             AWS_TOOLKIT_TEST_USER_DIR: '/tmp/.vscode-test/user-data/'
-            # Scope the run to one spec (e2e/index.ts reads TEST_FILE) and optionally a single
-            # test within it (testRunner.ts reads TEST_GREP -> mocha.grep).
+            # Scope the run to one spec (e2e/index.ts reads TEST_FILE); all tests in it run.
             TEST_FILE: ${{ inputs.test_file }}
-            TEST_GREP: ${{ inputs.test_grep }}
             # Must be != "local" to take the CI auth path (setupUtil.ts, setup.ts).
             AWS_TOOLKIT_AUTOMATION: 'ci'
             # Force the in-process inline-completion path so e2e tests that assert on
