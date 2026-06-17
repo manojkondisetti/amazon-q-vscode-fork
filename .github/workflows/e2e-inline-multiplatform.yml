@@ -90,11 +90,7 @@ jobs:
             - name: Configure node-gyp for VS 2025 (Windows)
               if: runner.os == 'Windows'
               shell: bash
-              run: |
-                  # node-gyp's VisualStudioFinder doesn't recognize VS 2025 (v18) yet.
-                  # Trick it into treating VS 2025 as VS 2022 by setting msvs_version.
-                  npm config set msvs_version 2022
-                  echo "GYP_MSVS_VERSION=2022" >> "$GITHUB_ENV"
+              run: echo "GYP_MSVS_VERSION=2022" >> "$GITHUB_ENV"
 
             - run: npm ci
 
