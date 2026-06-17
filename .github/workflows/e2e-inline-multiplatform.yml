@@ -92,10 +92,12 @@ jobs:
               run: |
                   if [ "$RUNNER_OS" = "Windows" ]; then
                     # node-gyp can't find VS 2025 on windows-latest for native modules
-                    # (registry-js). Install without scripts, then run the root prepare
-                    # script which builds the dist/ dirs needed for compilation.
+                    # (registry-js). Install without running lifecycle scripts, then manually
+                    # run the core package's postinstall (which builds dist/vue etc. needed
+                    # by the amazonq package's copyFiles step).
                     npm ci --ignore-scripts
-                    npm run prepare
+                    npm run -w packages/core generateTelemetry
+                    npm run -w packages/core compile
                   else
                     npm ci
                   fi
