@@ -88,17 +88,13 @@ jobs:
 
             - run: npm ci
 
-            - name: Set up Python + Playwright (Chromium, Linux/macOS)
-              if: runner.os != 'Windows'
+            - name: Set up Python + Playwright (Chromium)
+              shell: bash
               run: |
-                  python3 -m pip install --user playwright
-                  python3 -m playwright install --with-deps chromium
-
-            - name: Set up Python + Playwright (Chromium, Windows)
-              if: runner.os == 'Windows'
-              run: |
-                  python -m pip install --user playwright
-                  python -m playwright install --with-deps chromium
+                  PY="python3"
+                  if [ "$RUNNER_OS" = "Windows" ]; then PY="python"; fi
+                  $PY -m pip install --user playwright
+                  $PY -m playwright install --with-deps chromium
 
             # Linux-only: raise inotify watchers
             - name: Increase file watchers
