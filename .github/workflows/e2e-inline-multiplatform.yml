@@ -101,31 +101,14 @@ jobs:
               if: runner.os == 'Linux'
               run: echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p
 
-            # Linux: needs xvfb (virtual display)
-            - name: Run tests (Linux)
-              if: runner.os == 'Linux'
-              env:
-                  AWS_TOOLKIT_TEST_CACHE_DIR: '/tmp/.vscode-test/'
-                  AWS_TOOLKIT_TEST_USER_DIR: '/tmp/.vscode-test/user-data/'
+            # Run tests: Linux uses xvfb (virtual display); macOS/Windows run headed.
+            - name: Run tests
               uses: coactions/setup-xvfb@v1
+              env:
+                  AWS_TOOLKIT_TEST_CACHE_DIR: ${{ runner.os == 'Windows' && format('{0}\.vscode-test\', runner.temp) || '/tmp/.vscode-test/' }}
+                  AWS_TOOLKIT_TEST_USER_DIR: ${{ runner.os == 'Windows' && format('{0}\.vscode-test\user-data\', runner.temp) || '/tmp/.vscode-test/user-data/' }}
               with:
                   run: npm run testE2E -w packages/amazonq
-
-            # macOS: headed desktop, no xvfb needed
-            - name: Run tests (macOS)
-              if: runner.os == 'macOS'
-              env:
-                  AWS_TOOLKIT_TEST_CACHE_DIR: '/tmp/.vscode-test/'
-                  AWS_TOOLKIT_TEST_USER_DIR: '/tmp/.vscode-test/user-data/'
-              run: npm run testE2E -w packages/amazonq
-
-            # Windows: headed, no xvfb, use runner.temp for paths
-            - name: Run tests (Windows)
-              if: runner.os == 'Windows'
-              env:
-                  AWS_TOOLKIT_TEST_CACHE_DIR: '${{ runner.temp }}\.vscode-test\'
-                  AWS_TOOLKIT_TEST_USER_DIR: '${{ runner.temp }}\.vscode-test\user-data\'
-              run: npm run testE2E -w packages/amazonq
 
             - name: Upload test reports
               if: always()
