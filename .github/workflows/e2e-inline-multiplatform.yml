@@ -51,8 +51,8 @@ jobs:
                   case "${{ inputs.platform }}" in
                     linux)   echo 'platforms=["ubuntu-latest"]' >> "$GITHUB_OUTPUT" ;;
                     macos)   echo 'platforms=["macos-latest"]' >> "$GITHUB_OUTPUT" ;;
-                    windows) echo 'platforms=["windows-latest"]' >> "$GITHUB_OUTPUT" ;;
-                    *)       echo 'platforms=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT" ;;
+                    windows) echo 'platforms=["windows-2022"]' >> "$GITHUB_OUTPUT" ;;
+                    *)       echo 'platforms=["ubuntu-latest","macos-latest","windows-2022"]' >> "$GITHUB_OUTPUT" ;;
                   esac
 
     inline-e2e:
@@ -87,24 +87,7 @@ jobs:
                   node-version: '18.x'
                   cache: 'npm'
 
-            - name: Install dependencies
-              shell: bash
-              run: |
-                  if [ "$RUNNER_OS" = "Windows" ]; then
-                    # node-gyp can't find VS 2025 on windows-latest for registry-js (native).
-                    # Force npm to treat build failures as warnings, not errors.
-                    npm ci --foreground-scripts 2>&1 | tee /tmp/npm-ci.log || {
-                      # If the ONLY failure is registry-js gyp, continue anyway — it's only
-                      # needed for credential storage at runtime, not test execution.
-                      if grep -q "registry-js" /tmp/npm-ci.log && grep -q "gyp ERR" /tmp/npm-ci.log; then
-                        echo "::warning::registry-js native build failed (node-gyp + VS 2025) — continuing without it"
-                      else
-                        exit 1
-                      fi
-                    }
-                  else
-                    npm ci
-                  fi
+            - run: npm ci
 
             - name: Set up Python + Playwright (Chromium)
               shell: bash
