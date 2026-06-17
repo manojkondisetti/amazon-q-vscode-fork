@@ -216,6 +216,7 @@ describe('Amazon Q Inline', async function () {
                             console.log(e)
                             logUserDecisionStatus()
                             attempt++
+                            await closeAllEditors()
                             await resetCodeWhispererGlobalVariables()
                         }
                     }
