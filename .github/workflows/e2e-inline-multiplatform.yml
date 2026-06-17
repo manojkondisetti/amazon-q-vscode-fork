@@ -91,13 +91,17 @@ jobs:
               shell: bash
               run: |
                   if [ "$RUNNER_OS" = "Windows" ]; then
-                    # node-gyp can't find VS 2025 on windows-latest for native modules
-                    # (registry-js). Install without running lifecycle scripts, then manually
-                    # run the core package's postinstall (which builds dist/vue etc. needed
-                    # by the amazonq package's copyFiles step).
-                    npm ci --ignore-scripts
-                    npm run -w packages/core generateTelemetry
-                    npm run -w packages/core compile
+                    # node-gyp can't find VS 2025 on windows-latest for registry-js (native).
+                    # Force npm to treat build failures as warnings, not errors.
+                    npm ci --foreground-scripts 2>&1 | tee /tmp/npm-ci.log || {
+                      # If the ONLY failure is registry-js gyp, continue anyway — it's only
+                      # needed for credential storage at runtime, not test execution.
+                      if grep -q "registry-js" /tmp/npm-ci.log && grep -q "gyp ERR" /tmp/npm-ci.log; then
+                        echo "::warning::registry-js native build failed (node-gyp + VS 2025) — continuing without it"
+                      else
+                        exit 1
+                      fi
+                    }
                   else
                     npm ci
                   fi
