@@ -81,24 +81,13 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            - name: Use Node.js 18
+            - name: Use Node.js
               uses: actions/setup-node@v4
               with:
-                  node-version: '18.x'
+                  node-version: ${{ runner.os == 'Windows' && '20.x' || '18.x' }}
                   cache: 'npm'
 
-            - name: Install dependencies
-              shell: bash
-              run: |
-                  if [ "$RUNNER_OS" = "Windows" ]; then
-                    # Skip native module compilation (registry-js) on Windows — node-gyp
-                    # can't find VS on newer runners. The module is optional (credential
-                    # storage) and not needed for test execution.
-                    npm ci --ignore-scripts
-                    npm rebuild --ignore registry-js || true
-                  else
-                    npm ci
-                  fi
+            - run: npm ci
 
             - name: Set up Python + Playwright (Chromium)
               shell: bash
