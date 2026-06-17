@@ -88,11 +88,17 @@ jobs:
 
             - run: npm ci
 
-            - name: Set up Python + Playwright (Chromium)
-              shell: bash
+            - name: Set up Python + Playwright (Chromium, Linux/macOS)
+              if: runner.os != 'Windows'
               run: |
                   python3 -m pip install --user playwright
                   python3 -m playwright install --with-deps chromium
+
+            - name: Set up Python + Playwright (Chromium, Windows)
+              if: runner.os == 'Windows'
+              run: |
+                  python -m pip install --user playwright
+                  python -m playwright install --with-deps chromium
 
             # Linux-only: raise inotify watchers
             - name: Increase file watchers
@@ -133,6 +139,5 @@ jobs:
                   path: |
                       .test-reports/
                       packages/amazonq/.test-reports/
-                      /tmp/idc-diag/
                   if-no-files-found: warn
                   retention-days: 14

@@ -228,8 +228,9 @@ function runLocalBrowserLogin(urlString: string): Promise<void> {
     if (password) {
         localArgs.push('--password', password)
     }
-    // Diagnostics → /tmp (absolute, cwd-independent) so the artifact upload reliably captures them.
-    const outDir = '/tmp/idc-diag'
+    // Diagnostics → temp dir (absolute, cwd-independent) so the artifact upload reliably captures them.
+    const os2 = require('os') as typeof import('os')
+    const outDir = require('path').join(os2.tmpdir(), 'idc-diag')
     try {
         fs2.mkdirSync(outDir, { recursive: true })
     } catch {
@@ -244,8 +245,9 @@ function runLocalBrowserLogin(urlString: string): Promise<void> {
     // loop. A blocking call freezes the poll so it never sees the authorization. Awaiting a
     // spawned child yields the loop.
     return new Promise<void>((resolve, reject) => {
-        const child = spawn('python3', [script, ...localArgs], { stdio: ['ignore', 'pipe', 'pipe'] })
-        const timer = setTimeout(() => child.kill('SIGKILL'), 240_000)
+        const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+        const child = spawn(pythonCmd, [script, ...localArgs], { stdio: ['ignore', 'pipe', 'pipe'] })
+        const timer = setTimeout(() => child.kill(), 240_000)
         let stderr = ''
         child.stderr?.on('data', (d: Buffer) => (stderr += d.toString()))
         child.on('error', (err: Error) => {
