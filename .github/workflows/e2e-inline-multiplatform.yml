@@ -85,6 +85,7 @@ jobs:
               uses: actions/setup-node@v4
               with:
                   node-version: '18.x'
+                  cache: 'npm'
 
             - name: Set up Visual Studio Build Tools (Windows)
               if: runner.os == 'Windows'
