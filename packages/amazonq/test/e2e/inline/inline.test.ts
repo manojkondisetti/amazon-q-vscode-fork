@@ -88,6 +88,10 @@ describe('Amazon Q Inline', async function () {
     })
 
     afterEach(async function () {
+        // eslint-disable-next-line aws-toolkits/no-console-log
+        console.log(
+            `[inline-e2e] afterEach: test="${this.currentTest?.fullTitle()}" state=${this.currentTest?.state} retry=${this.currentTest?.currentRetry?.() ?? '?'}/${retries}`
+        )
         await closeAllEditors()
         if (this.currentTest?.state === undefined || this.currentTest?.isFailed() || this.currentTest?.isPending()) {
             logUserDecisionStatus()
@@ -223,6 +227,10 @@ describe('Amazon Q Inline', async function () {
                 })
 
                 it(`${name} invoke accept`, async function () {
+                    // eslint-disable-next-line aws-toolkits/no-console-log
+                    console.log(
+                        `[inline-e2e] starting "${name} invoke accept" — originalEditorContents length=${originalEditorContents?.length}`
+                    )
                     /**
                      * keep accepting the suggestion until the text contents change
                      * this is required because we have no access to the inlineSuggest panel
@@ -230,12 +238,26 @@ describe('Amazon Q Inline', async function () {
                     const suggestionAccepted = await waitUntil(async () => {
                         // Accept the suggestion
                         await vscode.commands.executeCommand('editor.action.inlineSuggest.commit')
-                        return vscode.window.activeTextEditor?.document.getText() !== originalEditorContents
+                        const currentText = vscode.window.activeTextEditor?.document.getText()
+                        const changed = currentText !== originalEditorContents
+                        if (!changed) {
+                            // eslint-disable-next-line aws-toolkits/no-console-log
+                            console.log(
+                                `[inline-e2e] accept: commit fired but text unchanged (len=${currentText?.length})`
+                            )
+                        }
+                        return changed
                     }, waitOptions)
 
+                    // eslint-disable-next-line aws-toolkits/no-console-log
+                    console.log(`[inline-e2e] accept: suggestionAccepted=${suggestionAccepted}`)
                     assert.ok(suggestionAccepted, 'Editor contents should have changed')
 
+                    // eslint-disable-next-line aws-toolkits/no-console-log
+                    console.log(`[inline-e2e] accept: waiting for Accept telemetry...`)
                     await waitForTelemetry('codewhisperer_userTriggerDecision', 'Accept')
+                    // eslint-disable-next-line aws-toolkits/no-console-log
+                    console.log(`[inline-e2e] accept: PASSED`)
                 })
 
                 it(`${name} invoke reject`, async function () {
