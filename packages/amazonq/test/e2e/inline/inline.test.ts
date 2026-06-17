@@ -9,7 +9,6 @@ import {
     closeAllEditors,
     getTestWindow,
     registerAuthHook,
-    registerStaticBearerToken,
     resetCodeWhispererGlobalVariables,
     TestFolder,
     toTextEditor,
@@ -38,34 +37,21 @@ describe('Amazon Q Inline', async function () {
         retryOnFail: false,
     }
 
-    // When BEARER_TOKEN is injected (CI), authenticate via the static token: patch the
-    // SsoAccessTokenProvider prototype for the WHOLE suite. The token is in-memory only and
-    // the patch must outlive every it() across before/beforeEach, so it is installed in a root
-    // before() and disposed in a root after() (NOT via using(), which disposes on callback
-    // resolve). Otherwise fall back to the browser/Lambda auth hook for internal CI / local runs.
-    const useStaticToken = !!process.env['BEARER_TOKEN']
-    let tokenDisposable: vscode.Disposable | undefined
-
     before(async function () {
         if (!isSSOTestEnvironmentAvailable()) {
             this.skip()
         }
-        if (useStaticToken) {
-            tokenDisposable = registerStaticBearerToken()
+        await using(registerAuthHook('amazonq-test-account'), async () => {
             await loginToIdC()
-        } else {
-            await using(registerAuthHook('amazonq-test-account'), async () => {
-                await loginToIdC()
-            })
-        }
+        })
         await logAuthDiagnostics()
     })
 
     /**
      * Surfaces the two things that decide whether inline completions can succeed, so a CI
      * failure is diagnosable from stdout instead of just "Suggestion did not show":
-     *  1. Auth state — does the injected token resolve to a connected Amazon Q connection, and is
-     *     a region profile selected? (validates the token/connection, not the completion call).
+     *  1. Auth state — does login resolve to a connected Amazon Q connection, and is a region
+     *     profile selected? (validates the connection, not the completion call).
      *  2. Pre-Flare rollback group — 'treatment' routes inline completions through the in-process
      *     RecommendationService (which this spec asserts on); 'control' (default) routes them
      *     through the Flare LSP, where the in-process `session` stays empty regardless of auth.
@@ -93,14 +79,8 @@ describe('Amazon Q Inline', async function () {
         }
     }
 
-    after(function () {
-        tokenDisposable?.dispose()
-    })
-
     beforeEach(async function () {
-        if (!useStaticToken) {
-            registerAuthHook('amazonq-test-account')
-        }
+        registerAuthHook('amazonq-test-account')
         const folder = await TestFolder.create()
         tempFolder = folder.path
         await closeAllEditors()

@@ -12,7 +12,6 @@ import { hasKey } from '../shared/utilities/tsUtils'
 import { getTestWindow, printPendingUiElements } from './shared/vscode/window'
 import { ToolkitError, formatError } from '../shared/errors'
 import { proceedToBrowser } from '../auth/sso/model'
-import { SsoAccessTokenProvider } from '../auth/sso/ssoAccessTokenProvider'
 import { decodeBase64 } from '../shared'
 
 const runnableTimeout = Symbol('runnableTimeout')
@@ -205,51 +204,64 @@ function maskArns(text: string) {
 }
 
 /**
- * Bypasses the SSO device-code/browser login entirely by injecting a pre-provisioned bearer
- * token (supplied via the `BEARER_TOKEN` env var, sourced from a GitHub repository secret).
+ * Drives the real SSO device-code browser approval LOCALLY (no auth Lambda) via a headless
+ * Playwright script (poc-artifacts/scripts/idc-browser-login.py). This mimics a genuine user
+ * login: the extension runs its own device-code flow, mints a real refreshable token, and
+ * caches it itself (correctly keyed) — the only injection seam is what drives the browser.
  *
- * Why this works without a browser, Lambda, or network call:
- * - `AuthUtil.connectToEnterpriseSso()` still runs, so a real IdC SSO connection is created in
- *   globalState with the correct Amazon Q scopes and cache key (the parts that CANNOT be
- *   pre-seeded from outside the extension).
- * - The only step that normally requires the browser is minting the token. We stub the token
- *   provider's `getToken`/`createToken` to return `BEARER_TOKEN` with a future expiry.
- * - `getChatAuthState()` validates the connection via `provider.getToken()` only (no network
- *   call validates the token bytes — see Auth.validateConnection), so the connection resolves
- *   to `valid`/`connected`.
- *
- * The returned token lives in memory only (not written to `~/.aws/sso/cache`), so callers MUST
- * make their assertions while this hook is still active (i.e. the disposable must outlive them).
- *
- * @returns a disposable that restores the original token provider methods.
+ * Credentials come from the `USER_NAME` / `PASSWORD` env vars (sourced from GitHub secrets);
+ * no Secrets Manager / AWS credentials are required.
  */
-export function registerStaticBearerToken(token = process.env['BEARER_TOKEN']): vscode.Disposable {
-    if (!token) {
-        throw new Error(
-            'registerStaticBearerToken requires a token. Set the BEARER_TOKEN environment variable ' +
-                '(sourced from the repository secret) before running authenticated E2E tests.'
-        )
+function runLocalBrowserLogin(urlString: string): Promise<void> {
+    const { spawn } = require('child_process') as typeof import('child_process')
+    const fs2 = require('fs') as typeof import('fs')
+    const script = process.env['AUTH_UTIL_LOCAL_BROWSER_SCRIPT'] ?? 'poc-artifacts/scripts/idc-browser-login.py'
+    // Keep the full URL (incl. user_code) — the Playwright driver handles the confirm page.
+    const localArgs = ['--url', urlString]
+    // Credentials from env (GitHub secrets USER_NAME / PASSWORD). The driver also accepts
+    // IDC_USERNAME / IDC_PASSWORD; pass whichever is set so local runs work too.
+    const username = process.env['USER_NAME'] ?? process.env['IDC_USERNAME']
+    const password = process.env['PASSWORD'] ?? process.env['IDC_PASSWORD']
+    if (username) {
+        localArgs.push('--username', username)
     }
-
-    // Expire far enough in the future that isExpired() (which subtracts a buffer) stays false
-    // for the whole test run, but within a plausible IdC session length.
-    const ssoToken = {
-        accessToken: token,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-        tokenType: 'Bearer',
+    if (password) {
+        localArgs.push('--password', password)
     }
-
-    // Patch the base class prototype: the concrete providers (DeviceFlowAuthorization,
-    // AuthFlowAuthorization, WebAuthorization) all inherit getToken/createToken from it.
-    const getTokenStub = patchObject(SsoAccessTokenProvider.prototype, 'getToken', async () => ssoToken as any)
-    const createTokenStub = patchObject(SsoAccessTokenProvider.prototype, 'createToken', async () => ssoToken as any)
-
-    return {
-        dispose: () => {
-            getTokenStub.dispose()
-            createTokenStub.dispose()
-        },
+    // Diagnostics → /tmp (absolute, cwd-independent) so the artifact upload reliably captures them.
+    const outDir = '/tmp/idc-diag'
+    try {
+        fs2.mkdirSync(outDir, { recursive: true })
+    } catch {
+        // ignore
     }
+    localArgs.push('--dump-html', `${outDir}/idc-page`)
+    // The driver writes its own log file (independent of pipes), so the trace survives even if
+    // we SIGKILL it on timeout.
+    localArgs.push('--log-file', `${outDir}/idc-browser-login.log`)
+    // CRITICAL: run ASYNC (spawn, not execFileSync). The browser approval must happen
+    // CONCURRENTLY with the extension's device-code token poll — both share this Node event
+    // loop. A blocking call freezes the poll so it never sees the authorization. Awaiting a
+    // spawned child yields the loop.
+    return new Promise<void>((resolve, reject) => {
+        const child = spawn('python3', [script, ...localArgs], { stdio: ['ignore', 'pipe', 'pipe'] })
+        const timer = setTimeout(() => child.kill('SIGKILL'), 240_000)
+        let stderr = ''
+        child.stderr?.on('data', (d: Buffer) => (stderr += d.toString()))
+        child.on('error', (err: Error) => {
+            clearTimeout(timer)
+            reject(err)
+        })
+        child.on('close', (code: number | null) => {
+            clearTimeout(timer)
+            if (code === 0) {
+                getLogger().info('idc-browser-login completed; see %s', `${outDir}/idc-browser-login.log`)
+                resolve()
+            } else {
+                reject(new Error(`idc-browser-login failed (exit ${code}):\n${stderr}`))
+            }
+        })
+    })
 }
 
 /**
@@ -259,8 +271,32 @@ export function registerStaticBearerToken(token = process.env['BEARER_TOKEN']): 
  * * `secret` - a SecretsManager secret containing login credentials.
  * * `userCode` - the user verification code e.g. `ABCD-EFGH`. This is returned by the device authorization flow.
  * * `verificationUri` - the url to login with. This is returned by the device authorization flow.
+ *
+ * When `AUTH_UTIL_LOCAL_BROWSER` is set, the browser approval is driven LOCALLY by a headless
+ * Playwright script instead of the auth Lambda (see {@link runLocalBrowserLogin}). The newer
+ * device-code flow shows a *progress* notification rather than the modal "Proceed To Browser"
+ * button, so we eagerly stub `openExternal` for the whole hook lifetime (and still click the
+ * modal if it appears), so any auth browser-open runs the local driver regardless of variant.
  */
 export function registerAuthHook(secret: string, lambdaId = process.env['AUTH_UTIL_LAMBDA_ARN']) {
+    if (process.env['AUTH_UTIL_LOCAL_BROWSER']) {
+        const openStub = patchObject(vscode.env, 'openExternal', async (target) => {
+            await runLocalBrowserLogin(target.toString(true))
+            return true
+        })
+        const sub = getTestWindow().onDidShowMessage((message) => {
+            if (message.items.length > 0 && message.items[0].title.match(new RegExp(proceedToBrowser))) {
+                message.items[0].select()
+            }
+        })
+        return {
+            dispose: () => {
+                sub.dispose()
+                openStub.dispose()
+            },
+        }
+    }
+
     return getTestWindow().onDidShowMessage((message) => {
         if (message.items.length > 0 && message.items[0].title.match(new RegExp(proceedToBrowser))) {
             if (!lambdaId) {

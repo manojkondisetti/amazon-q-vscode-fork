@@ -8,7 +8,7 @@
  * For web-based test imports, see {@link file://./../testWeb/index.ts}
  */
 
-export { registerAuthHook, registerStaticBearerToken, using } from './setupUtil'
+export { registerAuthHook, using } from './setupUtil'
 export { runTests } from './testRunner'
 export { MockDocument } from './fake/fakeDocument'
 export { FakeMemento, FakeExtensionContext } from './fakeExtensionContext'
