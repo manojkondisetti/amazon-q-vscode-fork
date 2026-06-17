@@ -108,12 +108,13 @@ describe('Amazon Q Inline', async function () {
         const fileName = name ?? 'test.ts'
         const textContents =
             contents ??
-            `function fib() {
-    
-    
+            `// Returns the nth Fibonacci number using iteration
+function fibonacci(n: number): number {
+
+
 }`
         await toTextEditor(textContents, fileName, tempFolder, {
-            selection: new vscode.Range(new vscode.Position(1, 4), new vscode.Position(1, 4)),
+            selection: new vscode.Range(new vscode.Position(2, 4), new vscode.Position(2, 4)),
         })
     }
 
