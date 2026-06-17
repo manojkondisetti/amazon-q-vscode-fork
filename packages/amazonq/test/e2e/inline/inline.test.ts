@@ -89,9 +89,7 @@ describe('Amazon Q Inline', async function () {
 
     afterEach(async function () {
         // eslint-disable-next-line aws-toolkits/no-console-log
-        console.log(
-            `[inline-e2e] afterEach: test="${this.currentTest?.fullTitle()}" state=${this.currentTest?.state} retry=${this.currentTest?.currentRetry?.() ?? '?'}/${retries}`
-        )
+        console.log(`[inline-e2e] afterEach: test="${this.currentTest?.fullTitle()}" state=${this.currentTest?.state}`)
         await closeAllEditors()
         if (this.currentTest?.state === undefined || this.currentTest?.isFailed() || this.currentTest?.isPending()) {
             logUserDecisionStatus()
