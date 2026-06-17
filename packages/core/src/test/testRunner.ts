@@ -83,6 +83,11 @@ export async function runTests(
         timeout: 0,
     })
 
+    const testGrep = process.env['TEST_GREP']
+    if (testGrep) {
+        mocha.grep(new RegExp(testGrep))
+    }
+
     const dist = path.resolve(root, 'dist')
     const rawTestFile = process.env['TEST_FILE']
     const testFile = rawTestFile?.replace(/\\/g, '/').replace('.ts', '.js')
